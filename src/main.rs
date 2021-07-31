@@ -18,6 +18,7 @@ mod errors {
     error_chain! {}
 }
 use errors::*;
+use colored::*;
 
 include!("util.rs");
 
@@ -272,6 +273,8 @@ fn cli_rip() -> App<'static> {
         .version(crate_version!())
         .author(crate_authors!())
         .setting(AppSettings::ArgRequiredElseHelp)
+        .global_setting(AppSettings::ColoredHelp)
+        .global_setting(AppSettings::ColorAuto)
         .about(
             "Rm ImProved
 Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinking them.",

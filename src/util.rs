@@ -18,10 +18,17 @@ fn get_user() -> String {
 
 /// Prompt for user input, returning True if the first character is 'y' or 'Y'
 fn prompt_yes<T: AsRef<str>>(prompt: T) -> bool {
-    print!("{} (y/N) ", prompt.as_ref());
+    print!("{} [{}/{}]", prompt.as_ref(),
+        "y".green().bold(),
+        "N".red().bold()
+    );
     if io::stdout().flush().is_err() {
         // If stdout wasn't flushed properly, fallback to println
-        println!("{} (y/N)", prompt.as_ref());
+        println!("{} [{}/{}]",
+            prompt.as_ref(),
+            "y".green().bold(),
+            "N".red().bold()
+        );
     }
     let stdin = BufReader::new(io::stdin());
     stdin
