@@ -7,16 +7,29 @@ extern crate time;
 extern crate walkdir;
 
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
-use clap_generate::generators::*;
-use clap_generate::{generate, Generator};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-use std::path::{Path, PathBuf};
-use std::{env, fs, io};
+use clap_generate::{
+    generators::*,
+    generate,
+    Generator
+};
+
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::fs::{FileTypeExt, PermissionsExt},
+    path::{Path, PathBuf},
+    env,
+    fs,
+    io,
+};
 use walkdir::WalkDir;
+
+use chrono::offset::Local;
+use chrono::DateTime;
+
 mod errors {
     error_chain! {}
 }
+
 use errors::*;
 use colored::*;
 
@@ -55,6 +68,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let matches = cli_rip().get_matches();
+    let nocolor: bool = if matches.is_present("nocolor") { true } else { false };
 
     let graveyard: &PathBuf = &{
         if let Some(flag) = matches.value_of("graveyard") {
@@ -139,10 +153,54 @@ fn run() -> Result<()> {
     }
 
     if matches.is_present("seance") {
-        let gravepath = join_absolute(graveyard, cwd);
+        // If all is passed, list the entire graveyard
+        let gravepath = if matches.is_present("all") {
+            PathBuf::from(graveyard)
+        } else {
+            join_absolute(graveyard, cwd)
+        };
         let f = fs::File::open(record).chain_err(|| "Failed to read record")?;
-        for grave in seance(f, gravepath.to_string_lossy()) {
-            println!("{}", grave.display());
+        for (i, grave) in seance(f, gravepath.to_string_lossy()).enumerate() {
+            // Get file creation time to list (TODO: add option to remove this?)
+            let metadata = fs::metadata(&grave);
+            let created = match metadata.unwrap().modified() {
+                Ok(v) => {
+                    let time: DateTime<Local> = v.into();
+                    format!("{}", time.format("%Y-%m-%d %T")).to_string()
+                },
+                _ => format!("N/A")
+            };
+            if nocolor {
+                if matches.is_present("fullpath") {
+                    println!("{:<3}- [{:<3}] {}",
+                        i.to_string(), created, grave.display()
+                    );
+                } else {
+                    println!("{:<3}- [{}] {}",
+                        i.to_string(),
+                        created,
+                        grave.display().to_string()
+                            .replace(graveyard.to_str().unwrap(), "")
+                    );
+                }
+            } else {
+                if matches.is_present("fullpath") {
+                    println!("{:<3}- [{}] {}",
+                        i.to_string().green().bold(),
+                        created.magenta().bold(),
+                        grave.display().to_string().yellow().bold()
+                    );
+                } else {
+                    println!("{:<3}- [{}] {}",
+                        i.to_string().green().bold(),
+                        created.magenta().bold(),
+                        grave.display()
+                            .to_string()
+                            .replace(graveyard.to_str().unwrap(), "")
+                            .yellow().bold()
+                    );
+                }
+            }
         }
         return Ok(());
     }
@@ -282,8 +340,6 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
         .arg(
             Arg::new("TARGET")
                 .about("File or directory to remove")
-                .short('t')
-                .long("target")
                 .takes_value(true)
                 .multiple(true), //.index(1)
         )
@@ -291,6 +347,7 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
             Arg::new("graveyard")
                 .about("Directory where deleted files go to rest")
                 .long("graveyard")
+                .short('g')
                 .takes_value(true),
         )
         .arg(
@@ -304,6 +361,27 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
                 .about("Prints files that were sent under the current directory")
                 .short('s')
                 .long("seance"),
+        )
+        .arg(
+            Arg::new("fullpath")
+                .about("Prints full path of files under current directory")
+                .short('f')
+                .long("fullpath")
+                .requires("seance"),
+        )
+        .arg(
+            Arg::new("all")
+                .about("Prints all files in graveyard")
+                .short('a')
+                .long("all")
+                .requires("seance"),
+        )
+        // TODO: Use this everywhere
+        .arg(
+            Arg::new("nocolor")
+                .about("Do not use colored output")
+                .short('N')
+                .long("no-color"),
         )
         .arg(
             Arg::new("unbury")
@@ -326,7 +404,6 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
             App::new("completion")
                 .version(crate_version!())
                 .author(crate_authors!())
-                .setting(AppSettings::Hidden)
                 .about("AutoCompletion")
                 .arg(
                     Arg::new("shell")
@@ -521,6 +598,8 @@ fn record_entry(line: &str) -> RecordItem {
         dest: Path::new(dest),
     }
 }
+
+// NOTE: To self, -> impl Trait = "Type returned will implement this trait and that's all"
 
 /// Takes a vector of grave paths and returns the respective lines in the record
 fn lines_of_graves<'a>(f: fs::File, graves: &'a [PathBuf]) -> impl Iterator<Item = String> + 'a {

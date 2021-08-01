@@ -21,6 +21,7 @@ walkdir = "1"
 time = "0.1"
 error-chain = "0.12"
 colored = "2.0.0"
+chrono = "0.4.19"
 
 [profile.release]
 opt-level = "s"
