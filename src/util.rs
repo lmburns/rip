@@ -1,3 +1,5 @@
+// use thiserror::Error;
+
 /// Concatenate two paths, even if the right argument is an absolute path.
 fn join_absolute<A: AsRef<Path>, B: AsRef<Path>>(left: A, right: B) -> PathBuf {
     let (left, right) = (left.as_ref(), right.as_ref());
@@ -18,7 +20,7 @@ fn get_user() -> String {
 
 /// Prompt for user input, returning True if the first character is 'y' or 'Y'
 fn prompt_yes<T: AsRef<str>>(prompt: T) -> bool {
-    print!("{} [{}/{}]", prompt.as_ref(),
+    print!("{} [{}/{}] ", prompt.as_ref(),
         "y".green().bold(),
         "N".red().bold()
     );

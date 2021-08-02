@@ -1,10 +1,11 @@
-// -*- compile-command: "cargo build" -*-
+#![allow(dead_code)]
 extern crate clap;
 extern crate core;
 #[macro_use]
 extern crate error_chain;
 extern crate time;
 extern crate walkdir;
+extern crate globwalk;
 
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
 use clap_generate::{
@@ -22,12 +23,20 @@ use std::{
     io,
 };
 use walkdir::WalkDir;
+use globwalk::{GlobWalker, GlobWalkerBuilder};
 
 use chrono::offset::Local;
 use chrono::DateTime;
 
+// use thiserror::Error;
+// use anyhow::{Context, Result};
+
 mod errors {
-    error_chain! {}
+    error_chain! {
+        foreign_links {
+           IoError(::std::io::Error);
+          }
+    }
 }
 
 use errors::*;
@@ -35,11 +44,36 @@ use colored::*;
 
 include!("util.rs");
 
+macro_rules! fmt_exp {
+    ($a:expr,$b:ident) => {
+        $a.display().to_string().$b().bold()
+    };
+}
+
+macro_rules! verbose {
+    ($e:expr,$v:expr) => {
+        println!("{}: {}",
+            $e.to_string().to_uppercase().green().bold(),
+            $v.to_string().yellow()
+        )
+    };
+}
+
+macro_rules! verbosed {
+    ($e:expr,$v:expr) => {
+        println!("{}: {:#?}",
+            $e.to_string().to_uppercase().green().bold(),
+            $v
+        )
+    };
+}
+
 const GRAVEYARD: &str = "/tmp/graveyard";
 const RECORD: &str = ".record";
 const LINES_TO_INSPECT: usize = 6;
 const FILES_TO_INSPECT: usize = 6;
 const BIG_FILE_THRESHOLD: u64 = 500000000; // 500 MB
+const DEFAULT_MAX_DEPTH: usize = 10; // 10 because $HOME/.local/share/graveyard is already pretty deep
 
 struct RecordItem<'a> {
     _time: &'a str,
@@ -67,8 +101,9 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let matches = cli_rip().get_matches();
+    let matches = &cli_rip().get_matches();
     let nocolor: bool = if matches.is_present("nocolor") { true } else { false };
+    let verbose: bool = if matches.is_present("verbose") { true } else { false };
 
     let graveyard: &PathBuf = &{
         if let Some(flag) = matches.value_of("graveyard") {
@@ -87,8 +122,11 @@ fn run() -> Result<()> {
     }
     .into();
 
+    if verbose { verbose!("graveyard", graveyard.display()); }
+
     if matches.is_present("decompose") {
         if prompt_yes("Really unlink the entire graveyard?") {
+            if verbose { verbose!("unlinking",graveyard.display()); }
             fs::remove_dir_all(graveyard).chain_err(|| "Couldn't unlink graveyard")?;
         }
         return Ok(());
@@ -102,8 +140,46 @@ fn run() -> Result<()> {
         // This will be used to determine which items to remove from the
         // record following the unbury.
         // Initialize it with the targets passed to -r
-        let graves_to_exhume: &mut Vec<PathBuf> = &mut t.map(PathBuf::from).collect();
+        // Prevent having to add full path with graveyard, like before
 
+        // Maybe a cleaner way? This is to detect if a glob is given (*glob, **glob)
+        let glob = if t.clone()
+            .nth(0)
+            .unwrap_or("None")
+            .contains("*") { true } else { false };
+
+        if verbose { verbose!("globbing", glob); }
+
+        let graves_to_exhume = &mut {
+            if glob {
+                let max_d = if let Some(max_depth) = matches.value_of("max-depth") {
+                    max_depth.parse::<usize>().unwrap()
+                } else {
+                    DEFAULT_MAX_DEPTH
+                };
+                if verbose { verbose!("max depth", max_d); }
+
+                glob_ok(
+                    &t.clone().nth(0).unwrap(),
+                    &graveyard,
+                    max_d
+                )
+        } else {
+            // Match files in local directory
+            if matches.is_present("local") {
+                t.clone().map(|file|
+                    join_absolute(
+                        join_absolute(graveyard, &cwd),
+                        PathBuf::from(file)
+                    )
+                ).collect::<Vec<PathBuf>>()
+            } else {
+                // Full path given
+                t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
+            }
+        }};
+
+        if verbose { verbosed!("exhumed cli matches", graves_to_exhume); }
         // If -s is also passed, push all files found by seance onto
         // the graves_to_exhume.
         if matches.is_present("seance") {
@@ -113,6 +189,7 @@ fn run() -> Result<()> {
                     graves_to_exhume.push(grave);
                 }
             }
+            if verbose { verbosed!("exhumed after seance", graves_to_exhume); }
         }
 
         // Otherwise, add the last deleted file
@@ -120,6 +197,7 @@ fn run() -> Result<()> {
             if let Ok(s) = get_last_bury(record) {
                 graves_to_exhume.push(s);
             }
+            if verbose { verbosed!("exhumed last bury", graves_to_exhume); }
         }
 
         // Go through the graveyard and exhume all the graves
@@ -136,11 +214,19 @@ fn run() -> Result<()> {
             bury(entry.dest, orig).chain_err(|| {
                 format!(
                     "Unbury failed: couldn't copy files from {} to {}",
-                    entry.dest.display(),
-                    orig.display()
+                    fmt_exp!(entry.dest, magenta),
+                    fmt_exp!(orig, red)
                 )
             })?;
-            println!("Returned {} to {}", entry.dest.display(), orig.display());
+            // Replaces value of $GRAVEYARD with the variable name because it is so long
+            println!("Returned {} to {}",
+                entry.dest.display()
+                    .to_string()
+                    .replace(graveyard.to_str().unwrap(), "$GRAVEYARD")
+                    .magenta()
+                    .bold(),
+                fmt_exp!(orig, red)
+            );
         }
 
         // Reopen the record and then delete lines corresponding to exhumed graves
@@ -155,10 +241,13 @@ fn run() -> Result<()> {
     if matches.is_present("seance") {
         // If all is passed, list the entire graveyard
         let gravepath = if matches.is_present("all") {
+            if verbose { verbose!("seancing all", "true"); }
             PathBuf::from(graveyard)
         } else {
+            if verbose { verbose!("seancing all", "false"); }
             join_absolute(graveyard, cwd)
         };
+
         let f = fs::File::open(record).chain_err(|| "Failed to read record")?;
         for (i, grave) in seance(f, gravepath.to_string_lossy()).enumerate() {
             // Get file creation time to list (TODO: add option to remove this?)
@@ -188,7 +277,7 @@ fn run() -> Result<()> {
                     println!("{:<3}- [{}] {}",
                         i.to_string().green().bold(),
                         created.magenta().bold(),
-                        grave.display().to_string().yellow().bold()
+                        fmt_exp!(grave, yellow)
                     );
                 } else {
                     println!("{:<3}- [{}] {}",
@@ -223,7 +312,7 @@ fn run() -> Result<()> {
                         // Get the size of the directory and all its contents
                         println!(
                             "{}: directory, {} including:",
-                            target,
+                            target.magenta().bold(),
                             humanize_bytes(
                                 WalkDir::new(source)
                                     .into_iter()
@@ -231,7 +320,7 @@ fn run() -> Result<()> {
                                     .filter_map(|x| x.metadata().ok())
                                     .map(|x| x.len())
                                     .sum::<u64>()
-                            )
+                            ).green().bold()
                         );
 
                         // Print the first few top-level files in the directory
@@ -245,7 +334,10 @@ fn run() -> Result<()> {
                             println!("{}", entry.path().display());
                         }
                     } else {
-                        println!("{}: file, {}", target, humanize_bytes(metadata.len()));
+                        println!("{}: file, {}",
+                            target.magenta().bold(),
+                            humanize_bytes(metadata.len()).green().bold()
+                        );
                         // Read the file and print the first few lines
                         if let Ok(f) = fs::File::open(source) {
                             for line in BufReader::new(f)
@@ -256,10 +348,14 @@ fn run() -> Result<()> {
                                 println!("> {}", line);
                             }
                         } else {
-                            println!("Error reading {}", source.display());
+                            println!("{}: problem reading {}",
+                                "Error".red().bold(),
+                                fmt_exp!(source, magenta)
+                            );
                         }
                     }
-                    if !prompt_yes(format!("Send {} to the graveyard?", target)) {
+                    if !prompt_yes(format!("Send {} to the graveyard?",
+                            target.magenta().bold())) {
                         continue;
                     }
                 }
@@ -267,14 +363,15 @@ fn run() -> Result<()> {
                 // If rip is called on a file already in the graveyard, prompt
                 // to permanently delete it instead.
                 if source.starts_with(graveyard) {
-                    println!("{} is already in the graveyard.", source.display());
+                    println!("{} is already in the graveyard.",
+                        source.display().to_string().magenta().bold());
                     if prompt_yes("Permanently unlink it?") {
                         if fs::remove_dir_all(source).is_err() {
                             fs::remove_file(source).chain_err(|| "Couldn't unlink")?;
                         }
                         continue;
                     } else {
-                        println!("Skipping {}", source.display());
+                        println!("Skipping {}", fmt_exp!(source, magenta));
                         return Ok(());
                     }
                 }
@@ -304,7 +401,8 @@ fn run() -> Result<()> {
         }
     }
 
-    if let Some(matches) = matches.subcommand_matches("completion") {
+    // TODO: Fix completions (they  don't work)
+    if let Some(matches) = matches.subcommand_matches("completions") {
         let shell = matches.value_of("shell").unwrap();
 
         let mut app = cli_rip();
@@ -314,12 +412,8 @@ fn run() -> Result<()> {
             "fish" => print_completions::<Fish>(&mut app),
             "powershell" => print_completions::<PowerShell>(&mut app),
             "zsh" => print_completions::<Zsh>(&mut app),
-            _ => panic!("Unknown generator"),
+            _ => bail!(format!("{}: Unknown shell", "Error".red().bold())),
         }
-
-        //if matches.is_present("manual") {
-        // TODO: manual
-        //}
     }
 
     Ok(())
@@ -332,7 +426,7 @@ fn cli_rip() -> App<'static> {
         .author(crate_authors!())
         .setting(AppSettings::ArgRequiredElseHelp)
         .global_setting(AppSettings::ColoredHelp)
-        .global_setting(AppSettings::ColorAuto)
+        .global_setting(AppSettings::ColorAlways)
         .about(
             "Rm ImProved
 Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinking them.",
@@ -347,7 +441,7 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
             Arg::new("graveyard")
                 .about("Directory where deleted files go to rest")
                 .long("graveyard")
-                .short('g')
+                .short('G')
                 .takes_value(true),
         )
         .arg(
@@ -364,7 +458,7 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
         )
         .arg(
             Arg::new("fullpath")
-                .about("Prints full path of files under current directory")
+                .about("Prints full path of files under current directory (with -s)")
                 .short('f')
                 .long("fullpath")
                 .requires("seance"),
@@ -379,20 +473,54 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
         // TODO: Use this everywhere
         .arg(
             Arg::new("nocolor")
-                .about("Do not use colored output")
+                .about("Do not use colored output (in progress)")
                 .short('N')
                 .long("no-color"),
         )
         .arg(
             Arg::new("unbury")
                 .about(
-                    "Undo the last removal by the current user, or specify some file(s) in the \
-                   graveyard.  Combine with -s to restore everything printed by -s.",
+                    "Undo the last removal, or specify some file(s) in the \
+                   graveyard. Can be glob, or combined with -s (see --help)",
                 )
+                .long_about(
+                    "Undo last removal with no arguments, specify some files using globbing \
+                    syntax, or combine with '-s' to undo all files that have been \
+                    removed in current directory. Globbing syntax involves: \
+                    *glob, **glob, *.{png,jpg,gif}, and using '!' before all previous \
+                    mentioned globs to negate them.")
                 .short('u')
                 .long("unbury")
                 .value_name("target")
                 .min_values(0),
+        )
+        .arg(
+            Arg::new("max-depth")
+                .about("Set max depth for glob to search (default: 10)")
+                .short('m')
+                .long("max-depth")
+                .requires("unbury")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("local")
+                .about("Undo files in current directory (local to current directory)")
+                .long_about(
+                    "Undo files that are in the current directory. If the files are in a directory \
+                    below the directory that you are in, you have to specify that directory. For example \
+                    if you're in a directory with a subdirectory 'src', and a file is in the $GRAVEYARD \
+                    as $GRAVEYARD/$PWD/src/<file>, you must type 'src/<file>' for it to be unburied."
+                )
+                .short('l')
+                .long("local")
+                .requires("unbury"),
+        )
+        // TODO: use
+        .arg(
+            Arg::new("plain")
+                .about("Prints only file-path (to be used with scripts)")
+                .short('p')
+                .long("plain"),
         )
         .arg(
             Arg::new("inspect")
@@ -400,10 +528,17 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
                 .short('i')
                 .long("inspect"),
         )
+        .arg(
+            Arg::new("verbose")
+                .about("Print what is going on")
+                .short('v')
+                .long("verbose"),
+        )
         .subcommand(
-            App::new("completion")
+            App::new("completions")
                 .version(crate_version!())
                 .author(crate_authors!())
+                .setting(AppSettings::Hidden)
                 .about("AutoCompletion")
                 .arg(
                     Arg::new("shell")
@@ -413,12 +548,6 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
                         .required(true)
                         .takes_value(true)
                         .possible_values(&["bash", "elvish", "fish", "powershell", "zsh"]),
-                )
-                .arg(
-                    Arg::new("manual")
-                        .short('m')
-                        .long("manual")
-                        .about("Display instructions on how to install autocompletions"),
                 ),
         )
 }
@@ -467,6 +596,8 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
         .chain_err(|| "Couldn't get metadata")?
         .is_dir()
     {
+        // for x in globwalk::glob() {
+        // }
         // Walk the source, creating directories and copying files as needed
         for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
             // Path without the top-level directory
@@ -639,4 +770,55 @@ fn delete_lines_from_record<R: AsRef<Path>>(
     }
 
     Ok(())
+}
+
+//     builder.build().map_err(|e|
+//         Error::with_chain(e, "Invalid Data")
+
+fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> Result<GlobWalker>
+where
+    S: AsRef<str>,
+{
+    // if let Some(max_depth) = max_depth {
+    //     builder = builder.max_depth(max_depth);
+    // } else {
+    //     builder = builder.max_depth(DEFAULT_MAX_DEPTH);
+    // }
+
+    let builder = GlobWalkerBuilder::new(
+        base.as_ref(),
+        pattern.as_ref()
+    );
+
+    builder
+        .max_depth(max_depth)
+        .build()
+        .map_err(|e|
+            Error::with_chain(e, "Invalid data")
+        )
+}
+
+fn glob_ok<P>(
+    pattern: &str,
+    base_path: P,
+    max_depth: usize,
+) -> Vec<PathBuf>
+where
+    P: AsRef<Path>,
+{
+    let mut globbed_paths: Vec<PathBuf> = Vec::new();
+    let base_path = base_path.as_ref().to_string_lossy().to_string();
+
+    for entry in glob_walker(
+        base_path.as_str(),
+        pattern,
+        max_depth
+        )
+        .unwrap()
+        .flatten()
+    {
+        globbed_paths.push(PathBuf::from(entry.path()));
+    }
+
+    globbed_paths
 }

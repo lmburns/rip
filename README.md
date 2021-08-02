@@ -3,9 +3,8 @@
 [![travis-ci](https://travis-ci.org/nivekuil/rip.svg?branch=master)](https://travis-ci.org/nivekuil/rip)
 
 #### Goals of Fork:
-1) Ability to list files under current directory with `$GRAVEYARD` missing. For example:
+* [x]  Ability to list files under current directory with `$GRAVEYARD` removed. For example:
 ```sh
-rip -s
 /Users/$USER/.local/share/graveyard/Users/$USER/test/colored
 
 # Transforms to
@@ -13,11 +12,14 @@ rip -ss
 /Users/$USER/test/colored
 ```
 
-2) Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
+* [x] Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
 
 3) Integrate `fzf` somehow
-4) Maybe display timestamps
-5) Maybe remove individual files from the `$GRAVEYARD`
+* [x] Maybe display timestamps
+5) Maybe remove individual files from the `$GRAVEYARD` with glob
+6) Better completion output (current do not work properly)
+[x] Use globs to return files, and prevent having to use full path
+8) Ability to restore file in local directory by just mentioning file name
 
 
 `rip` is a command-line deletion tool focused on safety, ergonomics, and performance.  It favors a simple interface, and does /not/ implement the `xdg-trash` spec or attempt to achieve the same goals.

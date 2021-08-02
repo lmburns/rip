@@ -22,6 +22,9 @@ time = "0.1"
 error-chain = "0.12"
 colored = "2.0.0"
 chrono = "0.4.19"
+anyhow = "1.0.42"
+glob = "0.3.0"
+globwalk = "0.8.1"
 
 [profile.release]
 opt-level = "s"
