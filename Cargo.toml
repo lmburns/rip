@@ -1,11 +1,11 @@
 [package]
 edition = '2018'
 name = "rm-improved"
-version = "0.13.1"
-authors = ["mail@nivekuil.com"]
-description = "rip: a safe and ergonomic alternative to rm"
+version = "0.13.4"
+authors = ["nivekuil <mail@nivekuil.com>", "Lucas Burns <lmb@lmburns.com>"]
+description = "rip: a safe and ergonomic alternative to rm (fork)"
 repository = "https://github.com/nivekuil/rip"
-readme = "README.org"
+readme = "README.md"
 license = "GPL-3.0+"
 include = [
     "**/*.rs",
@@ -15,8 +15,6 @@ categories = ["command-line-utilities"]
 autobins = false
 
 [dependencies]
-clap = "3.0.0-beta.2"
-clap_generate = "3.0.0-beta.2"
 walkdir = "1"
 time = "0.1"
 error-chain = "0.12"
@@ -25,6 +23,8 @@ chrono = "0.4.19"
 anyhow = "1.0.42"
 glob = "0.3.0"
 globwalk = "0.8.1"
+clap = "3.0.0-beta.2"
+clap_generate = "3.0.0-beta.2"
 
 [profile.release]
 opt-level = "s"

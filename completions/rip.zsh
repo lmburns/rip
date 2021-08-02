@@ -41,18 +41,8 @@ _rip() {
         '--help[Prints help information]' \
         '-V[Prints version information]' \
         '--version[Prints version information]' \
-        '*::TARGET -- File or directory to remove:' \
-        '1: :_rip_commands' \
+        '*::TARGET -- File or directory to remove:_files' \
             && ret=0
-}
-
-(( $+functions[_rip_commands] )) ||
-_rip_commands() {
-    local commands; commands=(
-    "completions:AutoCompletion" \
-    "help:Prints this message or the help of the given subcommand(s)" \
-    )
-    _describe -t commands 'rip commands' commands "$@"
 }
 
 _rip "$@"

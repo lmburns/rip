@@ -6,25 +6,23 @@
 * [x]  Ability to list files under current directory with `$GRAVEYARD` removed. For example:
 ```sh
 /Users/$USER/.local/share/graveyard/Users/$USER/test/colored
-
 # Transforms to
-rip -ss
 /Users/$USER/test/colored
 ```
 
 * [x] Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
 
 3) Integrate `fzf` somehow
-* [x] Maybe display timestamps
+* [x] Display timestamps
 5) Maybe remove individual files from the `$GRAVEYARD` with glob
 6) Better completion output (current do not work properly)
 [x] Use globs to return files, and prevent having to use full path
-8) Ability to restore file in local directory by just mentioning file name
+[x] Ability to restore file in local directory by just mentioning file name
 
 
 `rip` is a command-line deletion tool focused on safety, ergonomics, and performance.  It favors a simple interface, and does /not/ implement the `xdg-trash` spec or attempt to achieve the same goals.
 
-Deleted files get sent to the graveyard (`/tmp/graveyard-$USER` by default, see [notes](https://github.com/nivekuil/rip#-notes) on changing this) under their absolute path, giving you a chance to recover them.  No data is overwritten.  If files that share the same path are deleted, they will be renamed as numbered backups.
+Deleted files get sent to the graveyard (`$XDG_DATA_HOME/graveyard` if set, else `/tmp/graveyard-$USER` by default, see [notes](https://github.com/nivekuil/rip#-notes) on changing this) under their absolute path, giving you a chance to recover them.  No data is overwritten.  If files that share the same path are deleted, they will be renamed as numbered backups.
 
 `rip` is made for lazy people.  If any part of the interface could be more intuitive, please open an issue or pull request.
 
@@ -42,9 +40,15 @@ $ mv rip /usr/local/bin
 ```
 
 #### Or build it:
-
 ```sh
 $ cargo install rm-improved
+```
+
+#### Installing this fork
+```sh
+$ git clone https://github.com/lmburns/rip
+$ cd rip
+$ cargo build --release && mv target/release/rip ~/bin
 ```
 
 #### Arch Linux users can install it from the [AUR](https://aur.archlinux.org/packages/rm-improved/) (thanks `@Charon77`!)
@@ -61,22 +65,30 @@ $ brew install rm-improved
 ## ⚰ Usage
 
 ```sh
-   USAGE:
-       rip [FLAGS] [OPTIONS] [TARGET]...
+USAGE:
+    rip [FLAGS] [OPTIONS] [TARGET]...
 
-   FLAGS:
-       -d, --decompose    Permanently deletes (unlink) the entire graveyard
-       -h, --help         Prints help information
-       -i, --inspect      Prints some info about TARGET before prompting for action
-       -s, --seance       Prints files that were sent under the current directory
-       -V, --version      Prints version information
+ARGS:
+    <TARGET>...    File or directory to remove
 
-   OPTIONS:
-           --graveyard <graveyard>    Directory where deleted files go to rest
-       -u, --unbury <target>       Undo the last removal by the current user, or specify some file(s) in the graveyard.  Combine with -s to restore everything printed by -s.
+FLAGS:
+    -a, --all          Prints all files in graveyard
+    -d, --decompose    Permanently deletes (unlink) the entire graveyard
+    -f, --fullpath     Prints full path of files under current directory (with -s)
+    -h, --help         Prints help information
+    -i, --inspect      Prints some info about TARGET before prompting for action
+    -l, --local        Undo files in current directory (local to current directory)
+    -N, --no-color     Do not use colored output (in progress)
+    -p, --plain        Prints only file-path (to be used with scripts)
+    -s, --seance       Prints files that were sent under the current directory
+    -v, --verbose      Print what is going on
+    -V, --version      Prints version information
 
-   ARGS:
-       <TARGET>...    File or directory to remove
+OPTIONS:
+    -G, --graveyard <graveyard>    Directory where deleted files go to rest
+    -m, --max-depth <max-depth>    Set max depth for glob to search (default: 10)
+    -u, --unbury <target>          Undo the last removal, or specify some file(s) in the graveyard.
+                                   Can be glob, or combined with -s (see --help)
 ```
 
 #### Basic usage -- easier than `rm`
@@ -87,7 +99,7 @@ $ rip dir1/ file1
 #### Undo the last deletion
 ```sh
 $ rip -u
-Returned /tmp/graveyard-jack/home/jack/file1 to /home/jack/file1
+Returned /Users/jack/.local/share/graveyard/Users/jack/file1 to /Users/jack/file1
 ```
 
 #### Print some info
@@ -100,11 +112,30 @@ dir1: file, 1337 bytes including:
 Send file1 to the graveyard? (y/n) y
 ```
 
-#### Print files that were deleted from under the current directory
+#### Print files that were deleted
+These two options can be used with `-p` to prevent displaying index and time, and/or `-N` to not display colored output.
+
+##### Shortened path to buried file (by default, under current directory)
 ```sh
 $ rip -s
-/tmp/graveyard-jack/home/jack/file1
-/tmp/graveyard-jack/home/jack/dir1
+0  - [2021-07-31 16:40:45] /Users/jack/file1
+1  - [2021-07-31 18:21:23] /Users/jack/dir1
+```
+
+##### Full path to buried file (under current directory)
+```sh
+$ rip -sf
+0  - [2021-07-31 16:40:45] /Users/jack/.local/share/graveyard-jack/Users/jack/file1
+1  - [2021-07-31 18:21:23] /Users/jack/.local/share/graveyard-jack/Users/jack/dir1
+```
+
+##### Shortened path to buried file (all)
+```sh
+$ rip -sa
+0  - [2021-07-31 16:40:45] /Users/jack/file1
+1  - [2021-07-31 18:21:23] /Users/jack/dir1
+2  - [2021-07-31 18:48:49] /usr/local/share/dir1
+3  - [2021-07-31 19:09:41] /usr/local/share/dir2
 ```
 
 #### Name conflicts are resolved
@@ -112,22 +143,52 @@ $ rip -s
 $ touch file1
 $ rip file1
 $ rip -s
-/tmp/graveyard-jack/home/jack/dir1
-/tmp/graveyard-jack/home/jack/file1
-/tmp/graveyard-jack/home/jack/file1~1
+0  - [2021-07-31 16:40:45] /Users/jack/file1
+1  - [2021-07-31 18:21:23] /Users/jack/dir1
+2  - [2021-07-31 18:22:34] /Users/jack/file1~1
 ```
 
 #### `-u` also takes the path of a file in the `graveyard`
+##### Full path
 ```sh
-$ rip -u /tmp/graveyard-jack/home/jack/file1
-Returned /tmp/graveyard-jack/home/jack/file1 to /home/jack/file1
+$ rip -u /Users/jack/.local/share/graveyard-jack/Users/jack/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
 ```
+
+##### File `l`ocal to current directory
+```sh
+$ rip -s
+0  - [2021-07-31 16:40:45] /Users/jack/folder/folder2/file1
+$ pwd
+/Users/jack/folder
+$ rip -lu folder2/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/folder/folder2/file1 to /Users/jack/folder/folder2/file1
+```
+
+##### A glob pattern
+A glob is detected if an asterisk is used. A max-depth can be specified using `-m` or `--max-depth`
+```sh
+$ rip -s
+0  - [2021-07-31 16:40:45] /Users/jack/folder/folder2/file1
+1  - [2021-07-31 18:21:23] /Users/jack/dir1
+2  - [2021-07-31 18:22:34] /Users/jack/file2
+
+$ rip -u '*file*'
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/folder/folder2/file1 to /Users/jack/folder/folder2/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file2 to /Users/jack/file2
+```
+
+**NOTE:** Glob patterns can consist of:
+    * `*glob`, `!*glob`
+    * `**glob`, `!**glob` - Traverse many directories (however, `--max-depth` should probably be used for this)
+    * `*.{png.jpg,jpeg}`, `!*.{png.jpg,jpeg}` - Multiple patterns
+    * The `!` negates the pattern
 
 #### Combine `-u` and `-s` to restore everything printed by `-s`
 ```sh
 $ rip -su
-Returned /tmp/graveyard-jack/home/jack/dir1 to /home/jack/dir1
-Returned /tmp/graveyard-jack/home/jack/file1~1 to /home/jack/file1~1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/dir1 to /Users/jack/dir1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1~1 to /Users/jack/file1~1
 ```
 
 ### Emacs

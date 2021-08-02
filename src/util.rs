@@ -1,5 +1,3 @@
-// use thiserror::Error;
-
 /// Concatenate two paths, even if the right argument is an absolute path.
 fn join_absolute<A: AsRef<Path>, B: AsRef<Path>>(left: A, right: B) -> PathBuf {
     let (left, right) = (left.as_ref(), right.as_ref());

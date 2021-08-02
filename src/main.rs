@@ -11,13 +11,14 @@ use clap::{crate_authors, crate_version, App, AppSettings, Arg};
 use clap_generate::{
     generators::*,
     generate,
-    Generator
+    Generator,
 };
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
     os::unix::fs::{FileTypeExt, PermissionsExt},
     path::{Path, PathBuf},
+    io::Cursor,
     env,
     fs,
     io,
@@ -36,12 +37,23 @@ mod errors {
         foreign_links {
            IoError(::std::io::Error);
           }
+
+        errors {
+            MismatchedCompletion(n: colored::ColoredString, h: colored::ColoredString) {
+                description("unable to find completion text matching clap::Shell"),
+                display(
+                    "Failed to find text:\n{}\n…in completion script:\n{}",
+                    n, h
+                )
+            }
+        }
     }
 }
 
 use errors::*;
 use colored::*;
 
+mod comp_helper;
 include!("util.rs");
 
 macro_rules! fmt_exp {
@@ -159,25 +171,39 @@ fn run() -> Result<()> {
                 };
                 if verbose { verbose!("max depth", max_d); }
 
-                glob_ok(
+                glob_walk(
                     &t.clone().nth(0).unwrap(),
                     &graveyard,
                     max_d
                 )
-        } else {
-            // Match files in local directory
-            if matches.is_present("local") {
-                t.clone().map(|file|
-                    join_absolute(
-                        join_absolute(graveyard, &cwd),
-                        PathBuf::from(file)
-                    )
-                ).collect::<Vec<PathBuf>>()
             } else {
-                // Full path given
-                t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
+                // Match files in local directory
+                if matches.is_present("local") {
+                    t.clone().map(|file|
+                        join_absolute(
+                            join_absolute(graveyard, &cwd),
+                            PathBuf::from(file)
+                        )
+                    ).collect::<Vec<PathBuf>>()
+                } else {
+                    // TODO: parse better error here
+                    if matches.value_of("unbury").unwrap().to_string()
+                        .contains(graveyard.to_str().unwrap())
+                    {
+                        // Full path given (including graveyard)
+                        t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
+                    } else {
+                        // Full path given (excluding graveyard, i.e., starting from $HOME)
+                        t.clone().map(|file|
+                            join_absolute(
+                                graveyard,
+                                PathBuf::from(file)
+                            )
+                        ).collect::<Vec<PathBuf>>()
+                    }
+                }
             }
-        }};
+        };
 
         if verbose { verbosed!("exhumed cli matches", graves_to_exhume); }
         // If -s is also passed, push all files found by seance onto
@@ -241,10 +267,10 @@ fn run() -> Result<()> {
     if matches.is_present("seance") {
         // If all is passed, list the entire graveyard
         let gravepath = if matches.is_present("all") {
-            if verbose { verbose!("seancing all", "true"); }
+            if verbose { verbose!("seancing all", true); }
             PathBuf::from(graveyard)
         } else {
-            if verbose { verbose!("seancing all", "false"); }
+            if verbose { verbose!("seancing all", false); }
             join_absolute(graveyard, cwd)
         };
 
@@ -261,33 +287,50 @@ fn run() -> Result<()> {
             };
             if nocolor {
                 if matches.is_present("fullpath") {
-                    println!("{:<3}- [{:<3}] {}",
-                        i.to_string(), created, grave.display()
-                    );
+                    if matches.is_present("plain") {
+                        println!("{}", grave.display().to_string());
+                    } else {
+                        println!("{:<3}- [{:<3}] {}",
+                            i.to_string(), created, grave.display()
+                        );
+                    }
                 } else {
-                    println!("{:<3}- [{}] {}",
-                        i.to_string(),
-                        created,
-                        grave.display().to_string()
-                            .replace(graveyard.to_str().unwrap(), "")
-                    );
+                    let shortened = grave.display()
+                                .to_string()
+                                .replace(graveyard.to_str().unwrap(), "");
+
+                    if matches.is_present("plain") {
+                        println!("{}", shortened);
+                    } else {
+                        println!("{:<3}- [{}] {}", i.to_string(), created, shortened);
+                    }
                 }
             } else {
                 if matches.is_present("fullpath") {
-                    println!("{:<3}- [{}] {}",
-                        i.to_string().green().bold(),
-                        created.magenta().bold(),
-                        fmt_exp!(grave, yellow)
-                    );
+                    if matches.is_present("plain") {
+                        println!("{}", fmt_exp!(grave, yellow));
+                    } else {
+                        println!("{:<3}- [{}] {}",
+                            i.to_string().green().bold(),
+                            created.magenta().bold(),
+                            fmt_exp!(grave, yellow)
+                        );
+                    }
                 } else {
-                    println!("{:<3}- [{}] {}",
-                        i.to_string().green().bold(),
-                        created.magenta().bold(),
-                        grave.display()
-                            .to_string()
-                            .replace(graveyard.to_str().unwrap(), "")
-                            .yellow().bold()
-                    );
+                    let shortened = grave.display()
+                                .to_string()
+                                .replace(graveyard.to_str().unwrap(), "")
+                                .yellow().bold();
+
+                    if matches.is_present("plain") {
+                        println!("{}", shortened);
+                    } else {
+                        println!("{:<3}- [{}] {}",
+                            i.to_string().green().bold(),
+                            created.magenta().bold(),
+                            shortened
+                        );
+                    }
                 }
             }
         }
@@ -401,19 +444,37 @@ fn run() -> Result<()> {
         }
     }
 
-    // TODO: Fix completions (they  don't work)
     if let Some(matches) = matches.subcommand_matches("completions") {
         let shell = matches.value_of("shell").unwrap();
 
+        let buffer = Vec::new();
+        let mut cursor = Cursor::new(buffer);
+
+        // No longer able to find clap::Shell to parse into, so print_completions
+        // has to be repeated
         let mut app = cli_rip();
         match shell {
-            "bash" => print_completions::<Bash>(&mut app),
-            "elvish" => print_completions::<Elvish>(&mut app),
-            "fish" => print_completions::<Fish>(&mut app),
-            "powershell" => print_completions::<PowerShell>(&mut app),
-            "zsh" => print_completions::<Zsh>(&mut app),
+            "bash" => print_completions::<Bash>(&mut app, &mut cursor),
+            "elvish" => print_completions::<Elvish>(&mut app, &mut cursor),
+            "fish" => print_completions::<Fish>(&mut app, &mut cursor),
+            "powershell" => print_completions::<PowerShell>(&mut app, &mut cursor),
+            "zsh" => print_completions::<Zsh>(&mut app, &mut cursor),
             _ => bail!(format!("{}: Unknown shell", "Error".red().bold())),
         }
+
+        let buffer = cursor.into_inner();
+        let mut script = String::from_utf8(buffer)
+            .expect("Clap completion not UTF-8");
+
+        match shell {
+            "zsh" =>
+                for (needle, replacement) in comp_helper::ZSH_COMPLETION_REP {
+                    replace(&mut script, needle, replacement)?;
+            },
+            _ => println!(),
+        }
+
+        println!("{}", script.trim())
     }
 
     Ok(())
@@ -426,10 +487,11 @@ fn cli_rip() -> App<'static> {
         .author(crate_authors!())
         .setting(AppSettings::ArgRequiredElseHelp)
         .global_setting(AppSettings::ColoredHelp)
-        .global_setting(AppSettings::ColorAlways)
+        .global_setting(AppSettings::ColorAuto)
         .about(
             "Rm ImProved
-Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinking them.",
+Send files to the graveyard ($XDG_DATA_HOME/graveyard if set, else /tmp/graveyard-$USER by default) \
+instead of unlinking them.",
         )
         .arg(
             Arg::new("TARGET")
@@ -502,6 +564,7 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
                 .requires("unbury")
                 .takes_value(true),
         )
+        // TODO: use with glob
         .arg(
             Arg::new("local")
                 .about("Undo files in current directory (local to current directory)")
@@ -515,10 +578,13 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
                 .long("local")
                 .requires("unbury"),
         )
-        // TODO: use
         .arg(
             Arg::new("plain")
                 .about("Prints only file-path (to be used with scripts)")
+                .long_about(
+                    "Prints only file-path (that is: no index, no time). Can be used with \
+                    any variation of '-sfpN'"
+                )
                 .short('p')
                 .long("plain"),
         )
@@ -553,8 +619,30 @@ Send files to the graveyard (/tmp/graveyard-$USER by default) instead of unlinki
 }
 
 /// Print completions
-pub fn print_completions<G: Generator>(app: &mut App) {
-    generate::<G, _>(app, app.get_name().to_string(), &mut io::stdout());
+pub fn print_completions<G: Generator>(app: &mut App, cursor: &mut Cursor<Vec<u8>>) {
+    generate::<G, _>(app, app.get_name().to_string(), cursor);
+}
+
+// pub fn print_completions<G: Generator>(app: &mut App) {
+//     generate::<G, _>(app, app.get_name().to_string(), &mut io::stdout());
+// }
+
+
+fn replace(
+    haystack: &mut String,
+    needle: &str,
+    replacement: &str
+) -> Result<()> {
+    if let Some(index) = haystack.find(needle) {
+        haystack.replace_range(index..index + needle.len(), replacement);
+        Ok(())
+    } else {
+        Err(ErrorKind::MismatchedCompletion(
+                needle.to_string().red().bold(),
+                haystack.to_string().green().bold()
+            ).into()
+        )
+    }
 }
 
 /// Write deletion history to record
@@ -772,19 +860,12 @@ fn delete_lines_from_record<R: AsRef<Path>>(
     Ok(())
 }
 
-//     builder.build().map_err(|e|
-//         Error::with_chain(e, "Invalid Data")
-
+/// Create a GlobWalkerBuilder object that traverses the base directory, picking up
+/// each file matching the pattern.
 fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> Result<GlobWalker>
 where
     S: AsRef<str>,
 {
-    // if let Some(max_depth) = max_depth {
-    //     builder = builder.max_depth(max_depth);
-    // } else {
-    //     builder = builder.max_depth(DEFAULT_MAX_DEPTH);
-    // }
-
     let builder = GlobWalkerBuilder::new(
         base.as_ref(),
         pattern.as_ref()
@@ -798,7 +879,9 @@ where
         )
 }
 
-fn glob_ok<P>(
+/// Implement the glob_walker function, pushing each result to a Vec<PathBuf> and returning
+/// this vector
+fn glob_walk<P>(
     pattern: &str,
     base_path: P,
     max_depth: usize,
