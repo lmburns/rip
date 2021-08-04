@@ -12,10 +12,10 @@
 
 * [x] Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
 
-3) Integrate `fzf` somehow
+1) Integrate `fzf` in a better way
 * [x] Display timestamps
-5) Maybe remove individual files from the `$GRAVEYARD` with glob
-6) Better completion output (current do not work properly)
+1) Maybe remove individual files from the `$GRAVEYARD` with glob
+* [x] Better completion output (current do not work properly)
 * [x] Use globs to return files, and prevent having to use full path
 * [x] Ability to restore file in local directory by just mentioning file name
 
@@ -149,9 +149,16 @@ $ rip -s
 ```
 
 #### `-u` also takes the path of a file in the `graveyard`
-##### Full path
+##### Full path (including `$GRAVEYARD`)
+This option is mainly here for compatibility with scripts or anything else that uses older versions.
 ```sh
 $ rip -u /Users/jack/.local/share/graveyard-jack/Users/jack/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
+```
+
+##### Full path (from `$HOME`)
+```sh
+$ rip -u /Users/jack/file1
 Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
 ```
 
@@ -199,11 +206,23 @@ Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1~1 to /Users/ja
 ```
 
 ## ⚰ Notes
-   - You probably shouldn't alias `rm` to `rip`.  Unlearning muscle memory is hard, but it's harder to ensure that every `rm` you make (as different users, from different machines and application environments) is the aliased one.
-   - If you have `$XDG_DATA_HOME` environment variable set, `rip` will use `$XDG_DATA_HOME/graveyard` instead of the `/tmp/graveyard-$USER`.
-   - If you want to put the graveyard somewhere else (like `~/.local/share/Trash`), you have two options, in order of precedence:
-     1. Alias `rip` to `rip --graveyard ~/.local/share/Trash`
-     2. Set the environment variable `$GRAVEYARD` to `~/.local/share/Trash`.
-     This can be a good idea because if the `graveyard` is mounted on an in-memory filesystem (as /tmp is in Arch Linux), deleting large files can quickly fill up your RAM.  It's also much slower to move files across file-systems, although the delay should be minimal with an SSD.
-   - In general, a deletion followed by a `--unbury` should be idempotent.
-   - The deletion log is kept in `.record`, found in the top level of the graveyard.
+- You probably shouldn't alias `rm` to `rip`.
+    - Unlearning muscle memory is hard, but it's harder to ensure that every `rm` you make (as different users, from different machines and application environments) is the aliased one.
+    - If you're using `zsh`, it is possible to create a `zsh` function like the following and add it to your `fpath`. This allows the user to use `rm` as `rip`, but if you type `sudo`, then it will use the actual `rm` command.
+```zsh
+[[ $EUID -ne 0 ]] && rip "${@}" || command rm -I -v "${@}"
+```
+
+- If you have `$XDG_DATA_HOME` environment variable set, `rip` will use `$XDG_DATA_HOME/graveyard` instead of the `/tmp/graveyard-$USER`.
+- If you want to put the graveyard somewhere else (like `~/.local/share/Trash`), you have two options, in order of precedence:
+```zsh
+# 1) Aliasing rip
+alias rip="rip --graveyard $HOME/.local/share/Trash"
+
+# 2) Set environment variable
+export GRAVEYARD="$HOME/.local/share/Trash"
+```
+ This can be a good idea because if the `graveyard` is mounted on an in-memory filesystem (as `/tmp` is in Arch Linux), deleting large files can quickly fill up your RAM.  It's also much slower to move files across file-systems, although the delay should be minimal with an SSD.
+
+- In general, a deletion followed by a `--unbury` should be idempotent.
+- The deletion log is kept in `.record`, found in the top level of the graveyard.

@@ -138,7 +138,18 @@ fn run() -> Result<()> {
 
     if matches.is_present("decompose") {
         if prompt_yes("Really unlink the entire graveyard?") {
-            if verbose { verbose!("unlinking",graveyard.display()); }
+            let dir = fs::read_dir(graveyard).chain_err(|| "Couldn't read dir")?;
+            // TODO: traverse dirs
+            if verbose {
+                for d in dir {
+                    let t = &d.unwrap().path();
+                    println!("Deleting: {} [{}]",
+                        &t.to_str().unwrap()
+                        .bright_red().bold(),
+                        file_type(&t),
+                    );
+                }
+            }
             fs::remove_dir_all(graveyard).chain_err(|| "Couldn't unlink graveyard")?;
         }
         return Ok(());
@@ -147,13 +158,8 @@ fn run() -> Result<()> {
     let record: &Path = &graveyard.join(RECORD);
     let cwd: PathBuf = env::current_dir().chain_err(|| "Failed to get current dir")?;
 
+    // == UNBURY ==
     if let Some(t) = matches.values_of("unbury") {
-        // Vector to hold the grave path of items we want to unbury.
-        // This will be used to determine which items to remove from the
-        // record following the unbury.
-        // Initialize it with the targets passed to -r
-        // Prevent having to add full path with graveyard, like before
-
         // Maybe a cleaner way? This is to detect if a glob is given (*glob, **glob)
         let glob = if t.clone()
             .nth(0)
@@ -162,6 +168,10 @@ fn run() -> Result<()> {
 
         if verbose { verbose!("globbing", glob); }
 
+        // Vector to hold the grave path of items we want to unbury.
+        // This will be used to determine which items to remove from the
+        // record following the unbury.
+        // Initialize it with the targets passed to -r
         let graves_to_exhume = &mut {
             if glob {
                 let max_d = if let Some(max_depth) = matches.value_of("max-depth") {
@@ -186,8 +196,9 @@ fn run() -> Result<()> {
                         )
                     ).collect::<Vec<PathBuf>>()
                 } else {
-                    // TODO: parse better error here
-                    if matches.value_of("unbury").unwrap().to_string()
+                    if matches.value_of("unbury")
+                        .unwrap_or("None")
+                        .to_string()
                         .contains(graveyard.to_str().unwrap())
                     {
                         // Full path given (including graveyard)
@@ -245,14 +256,18 @@ fn run() -> Result<()> {
                 )
             })?;
             // Replaces value of $GRAVEYARD with the variable name because it is so long
-            println!("Returned {} to {}",
-                entry.dest.display()
-                    .to_string()
-                    .replace(graveyard.to_str().unwrap(), "$GRAVEYARD")
-                    .magenta()
-                    .bold(),
-                fmt_exp!(orig, red)
-            );
+            if matches.is_present("fullpath") {
+                println!("Returned {} to {}",
+                    entry.dest.display()
+                        .to_string()
+                        .replace(graveyard.to_str().unwrap(), "$GRAVEYARD")
+                        .magenta()
+                        .bold(),
+                    fmt_exp!(orig, red)
+                );
+            } else {
+                println!("Returned {}", fmt_exp!(orig, red));
+            }
         }
 
         // Reopen the record and then delete lines corresponding to exhumed graves
@@ -264,6 +279,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    // == SEANCE ==
     if matches.is_present("seance") {
         // If all is passed, list the entire graveyard
         let gravepath = if matches.is_present("all") {
@@ -276,33 +292,37 @@ fn run() -> Result<()> {
 
         let f = fs::File::open(record).chain_err(|| "Failed to read record")?;
         for (i, grave) in seance(f, gravepath.to_string_lossy()).enumerate() {
-            // Get file creation time to list (TODO: add option to remove this?)
             let metadata = fs::metadata(&grave);
-            let created = match metadata.unwrap().modified() {
+            let created = match metadata.unwrap().clone().modified() {
                 Ok(v) => {
                     let time: DateTime<Local> = v.into();
                     format!("{}", time.format("%Y-%m-%d %T")).to_string()
                 },
                 _ => format!("N/A")
             };
+
+            let otype = file_type(&grave);
+
             if nocolor {
                 if matches.is_present("fullpath") {
                     if matches.is_present("plain") {
                         println!("{}", grave.display().to_string());
                     } else {
-                        println!("{:<3}- [{:<3}] {}",
-                            i.to_string(), created, grave.display()
+                        println!("{:<3}- [{}] {:<5} {}",
+                            i.to_string(), created, otype, grave.display()
                         );
                     }
                 } else {
                     let shortened = grave.display()
-                                .to_string()
-                                .replace(graveyard.to_str().unwrap(), "");
+                                         .to_string()
+                                         .replace(graveyard.to_str().unwrap(), "");
 
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        println!("{:<3}- [{}] {}", i.to_string(), created, shortened);
+                        println!("{:<3}- [{}] {:<5} {}",
+                            i.to_string(), created, otype, shortened
+                        );
                     }
                 }
             } else {
@@ -310,9 +330,10 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", fmt_exp!(grave, yellow));
                     } else {
-                        println!("{:<3}- [{}] {}",
+                        println!("{:<3}- [{}] {:<5} {}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
+                            otype.bright_red().bold(),
                             fmt_exp!(grave, yellow)
                         );
                     }
@@ -325,9 +346,10 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        println!("{:<3}- [{}] {}",
+                        println!("{:<3}- [{}] {:<5} {}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
+                            otype.bright_red().bold(),
                             shortened
                         );
                     }
@@ -453,7 +475,7 @@ fn run() -> Result<()> {
         // No longer able to find clap::Shell to parse into, so print_completions
         // has to be repeated
         let mut app = cli_rip();
-        match shell {
+        match shell.to_lowercase().trim() {
             "bash" => print_completions::<Bash>(&mut app, &mut cursor),
             "elvish" => print_completions::<Elvish>(&mut app, &mut cursor),
             "fish" => print_completions::<Fish>(&mut app, &mut cursor),
@@ -522,8 +544,9 @@ instead of unlinking them.",
             Arg::new("fullpath")
                 .about("Prints full path of files under current directory (with -s)")
                 .short('f')
-                .long("fullpath")
-                .requires("seance"),
+                .long("fullpath"),
+                // It'd be nice to have a requires for two other args using an or
+                // seance, decompose
         )
         .arg(
             Arg::new("all")
@@ -623,11 +646,14 @@ pub fn print_completions<G: Generator>(app: &mut App, cursor: &mut Cursor<Vec<u8
     generate::<G, _>(app, app.get_name().to_string(), cursor);
 }
 
-// pub fn print_completions<G: Generator>(app: &mut App) {
-//     generate::<G, _>(app, app.get_name().to_string(), &mut io::stdout());
-// }
+/// Get the file's file type for displaying it
+fn file_type(p: &PathBuf) -> String {
+    if fs::metadata(p).unwrap().is_file() { String::from("file") }
+    else if fs::metadata(p).unwrap().is_dir() { String::from("dir") }
+    else { String::from("other") }
+}
 
-
+/// Replace parts of completions output
 fn replace(
     haystack: &mut String,
     needle: &str,

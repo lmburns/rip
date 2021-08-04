@@ -428,6 +428,7 @@ dependencies = [
  "error-chain",
  "glob",
  "globwalk",
+ "log",
  "time",
  "walkdir 1.0.7",
 ]
