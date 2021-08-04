@@ -11,14 +11,12 @@
 ```
 
 * [x] Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
-
-1) Integrate `fzf` in a better way
+3) Integrate `fzf` in a better way
 * [x] Display timestamps
-1) Maybe remove individual files from the `$GRAVEYARD` with glob
+5) Maybe remove individual files from the `$GRAVEYARD` with glob
 * [x] Better completion output (current do not work properly)
 * [x] Use globs to return files, and prevent having to use full path
 * [x] Ability to restore file in local directory by just mentioning file name
-
 
 `rip` is a command-line deletion tool focused on safety, ergonomics, and performance.  It favors a simple interface, and does /not/ implement the `xdg-trash` spec or attempt to achieve the same goals.
 
