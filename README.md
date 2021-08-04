@@ -12,10 +12,10 @@
 
 * [x] Ability to list all files that are removed (both with and without `$GRAVEYARD`) not just files under current directory.
 
-3) Integrate `fzf` somehow
+3) Integrate `fzf` in a better way
 * [x] Display timestamps
 5) Maybe remove individual files from the `$GRAVEYARD` with glob
-6) Better completion output (current do not work properly)
+* [x] Better completion output (current do not work properly)
 * [x] Use globs to return files, and prevent having to use full path
 * [x] Ability to restore file in local directory by just mentioning file name
 
@@ -149,9 +149,16 @@ $ rip -s
 ```
 
 #### `-u` also takes the path of a file in the `graveyard`
-##### Full path
+##### Full path (including `$GRAVEYARD`)
+This option is mainly here for compatibility with scripts or anything else that uses older versions.
 ```sh
 $ rip -u /Users/jack/.local/share/graveyard-jack/Users/jack/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
+```
+
+##### Full path (from `$HOME`)
+```sh
+$ rip -u /Users/jack/file1
 Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
 ```
 
