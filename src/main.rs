@@ -6,6 +6,7 @@ extern crate error_chain;
 extern crate time;
 extern crate walkdir;
 extern crate globwalk;
+extern crate tabwriter;
 
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
 use clap_generate::{
@@ -40,11 +41,16 @@ mod errors {
 
         errors {
             MismatchedCompletion(n: colored::ColoredString, h: colored::ColoredString) {
-                description("unable to find completion text matching clap::Shell"),
+                description("unable to find completion text matching clap::Shell")
                 display(
                     "Failed to find text:\n{}\n…in completion script:\n{}",
                     n, h
                 )
+            }
+
+            InvalidShell(s: colored::ColoredString) {
+                description("invalid shell entered"),
+                display("Invalid shell: {}", s)
             }
         }
     }
@@ -93,6 +99,29 @@ struct RecordItem<'a> {
     dest: &'a Path,
 }
 
+#[allow(clippy::enum_variant_names)]
+enum Shell {
+    Bash,
+    Elvish,
+    Fish,
+    PowerShell,
+    Zsh,
+}
+
+impl std::str::FromStr for Shell {
+    type Err = errors::ErrorKind;
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().trim() {
+            "bash" => Ok(Shell::Bash),
+            "elvish" => Ok(Shell::Elvish),
+            "fish" => Ok(Shell::Fish),
+            "powershell" => Ok(Shell::PowerShell),
+            "zsh" => Ok(Shell::Zsh),
+            _ => Err(ErrorKind::InvalidShell(s.bright_red().bold())),
+        }
+    }
+}
+
 fn main() {
     if let Err(ref e) = run() {
         let stderr = &mut ::std::io::stderr();
@@ -138,17 +167,33 @@ fn run() -> Result<()> {
 
     if matches.is_present("decompose") {
         if prompt_yes("Really unlink the entire graveyard?") {
-            let dir = fs::read_dir(graveyard).chain_err(|| "Couldn't read dir")?;
-            // TODO: traverse dirs
+            // let dir = fs::read_dir(graveyard).chain_err(|| "Couldn't read dir")?;
             if verbose {
-                for d in dir {
-                    let t = &d.unwrap().path();
-                    println!("Deleting: {} [{}]",
-                        &t.to_str().unwrap()
-                        .bright_red().bold(),
-                        file_type(&t),
-                    );
+                let stdout = io::stdout();
+                let std_lock = stdout.lock();
+                let handle = io::BufWriter::new(std_lock);
+                let mut tab_handle = tabwriter::TabWriter::new(handle);
+
+                writeln!(tab_handle, "{}\t{}", "File".cyan().bold(), "Type".bright_red().bold())?;
+                writeln!(tab_handle, "{}\t{}", "----".cyan().bold(), "----".bright_red().bold())?;
+
+                let mut f = fs::File::open(&graveyard.join(RECORD))?;
+                let mut contents = String::new();
+                f.read_to_string(&mut contents)?;
+
+                // This could be cleaned up more if/when for loops can return a value
+                for entry in contents.lines().map(record_entry) {
+                    writeln!(tab_handle, "{}\t{}",
+                        fmt_exp!(entry.orig, cyan),
+                        file_type(
+                            &join_absolute(
+                                &graveyard,
+                                PathBuf::from(entry.orig),
+                            )
+                        ).bright_red().bold(),
+                    )?;
                 }
+                tab_handle.flush()?;
             }
             fs::remove_dir_all(graveyard).chain_err(|| "Couldn't unlink graveyard")?;
         }
@@ -181,11 +226,19 @@ fn run() -> Result<()> {
                 };
                 if verbose { verbose!("max depth", max_d); }
 
-                glob_walk(
-                    &t.clone().nth(0).unwrap(),
-                    &graveyard,
-                    max_d
-                )
+                if matches.is_present("local") {
+                    glob_walk(
+                        &t.clone().nth(0).unwrap(),
+                        join_absolute(&graveyard, &cwd),
+                        max_d
+                    )
+                } else {
+                    glob_walk(
+                        &t.clone().nth(0).unwrap(),
+                        &graveyard,
+                        max_d
+                    )
+                }
             } else {
                 // Match files in local directory
                 if matches.is_present("local") {
@@ -291,6 +344,11 @@ fn run() -> Result<()> {
         };
 
         let f = fs::File::open(record).chain_err(|| "Failed to read record")?;
+        let stdout = io::stdout();
+        let std_lock = stdout.lock();
+        let handle = io::BufWriter::new(std_lock);
+        let mut tab_handle = tabwriter::TabWriter::new(handle);
+
         for (i, grave) in seance(f, gravepath.to_string_lossy()).enumerate() {
             let metadata = fs::metadata(&grave);
             let created = match metadata.unwrap().clone().modified() {
@@ -308,9 +366,9 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", grave.display().to_string());
                     } else {
-                        println!("{:<3}- [{}] {:<5} {}",
+                        writeln!(tab_handle, "{}\t{}\t{}\t{}",
                             i.to_string(), created, otype, grave.display()
-                        );
+                        )?;
                     }
                 } else {
                     let shortened = grave.display()
@@ -320,22 +378,27 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        println!("{:<3}- [{}] {:<5} {}",
+                        writeln!(tab_handle, "{}\t{}\t{}\t{}",
                             i.to_string(), created, otype, shortened
-                        );
+                        )?;
                     }
                 }
             } else {
+                // let brbb = |s: &str| s.bright_blue().bold();
+                // let brcb = |s: &str| "=".repeat(s.len()).bright_cyan().bold();
+                // writeln!(tab_handle, "{}\t{}\t{}\t{}", brbb("Index"), brbb("Created"), brbb("Type"), brbb("File"))?;
+                // writeln!(tab_handle, "{}\t{}\t{}\t{}", brcb("Index"), brcb("Created"), brcb("Type"), brcb("File"))?;
+
                 if matches.is_present("fullpath") {
                     if matches.is_present("plain") {
                         println!("{}", fmt_exp!(grave, yellow));
                     } else {
-                        println!("{:<3}- [{}] {:<5} {}",
+                        writeln!(tab_handle, "{}\t{}\t{:<5}\t{}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
                             otype.bright_red().bold(),
                             fmt_exp!(grave, yellow)
-                        );
+                        )?;
                     }
                 } else {
                     let shortened = grave.display()
@@ -346,14 +409,15 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        println!("{:<3}- [{}] {:<5} {}",
+                        writeln!(tab_handle, "{}\t{}\t{:<5}\t{}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
                             otype.bright_red().bold(),
                             shortened
-                        );
+                        )?;
                     }
                 }
+                tab_handle.flush()?;
             }
         }
         return Ok(());
@@ -467,31 +531,32 @@ fn run() -> Result<()> {
     }
 
     if let Some(matches) = matches.subcommand_matches("completions") {
-        let shell = matches.value_of("shell").unwrap();
+        let shell = matches.value_of("shell")
+            .unwrap()
+            .parse::<Shell>()?;
 
         let buffer = Vec::new();
         let mut cursor = Cursor::new(buffer);
-
-        // No longer able to find clap::Shell to parse into, so print_completions
-        // has to be repeated
         let mut app = cli_rip();
-        match shell.to_lowercase().trim() {
-            "bash" => print_completions::<Bash>(&mut app, &mut cursor),
-            "elvish" => print_completions::<Elvish>(&mut app, &mut cursor),
-            "fish" => print_completions::<Fish>(&mut app, &mut cursor),
-            "powershell" => print_completions::<PowerShell>(&mut app, &mut cursor),
-            "zsh" => print_completions::<Zsh>(&mut app, &mut cursor),
-            _ => bail!(format!("{}: Unknown shell", "Error".red().bold())),
+
+        match shell {
+            Shell::Bash => print_completions::<Bash>(&mut app, &mut cursor),
+            Shell::Elvish => print_completions::<Elvish>(&mut app, &mut cursor),
+            Shell::Fish => print_completions::<Fish>(&mut app, &mut cursor),
+            Shell::PowerShell => print_completions::<PowerShell>(&mut app, &mut cursor),
+            Shell::Zsh => print_completions::<Zsh>(&mut app, &mut cursor),
         }
 
         let buffer = cursor.into_inner();
         let mut script = String::from_utf8(buffer)
             .expect("Clap completion not UTF-8");
 
+        // Modify the Zsh completions before printing them out
         match shell {
-            "zsh" =>
+            Shell::Zsh => {
                 for (needle, replacement) in comp_helper::ZSH_COMPLETION_REP {
                     replace(&mut script, needle, replacement)?;
+                }
             },
             _ => println!(),
         }

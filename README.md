@@ -2,6 +2,8 @@
 [![crates.io](https://img.shields.io/crates/v/rm-improved.svg)](https://crates.io/crates/rm-improved)
 [![travis-ci](https://travis-ci.org/nivekuil/rip.svg?branch=master)](https://travis-ci.org/nivekuil/rip)
 
+[![asciicast](https://asciinema.org/a/428997.svg)](https://asciinema.org/a/428997)
+
 #### Goals of Fork:
 * [x]  Ability to list files under current directory with `$GRAVEYARD` removed. For example:
 ```sh
