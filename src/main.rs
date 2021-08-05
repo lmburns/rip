@@ -68,6 +68,7 @@ macro_rules! fmt_exp {
     };
 }
 
+// These are somewhat treated as log::debug, etc
 macro_rules! verbose {
     ($e:expr,$v:expr) => {
         println!("{}: {}",
@@ -282,10 +283,19 @@ fn run() -> Result<()> {
             if verbose { verbosed!("exhumed after seance", graves_to_exhume); }
         }
 
-        // Otherwise, add the last deleted file
+        // Otherwise, add the last deleted file, globally or locally
         if graves_to_exhume.is_empty() {
-            if let Ok(s) = get_last_bury(record) {
-                graves_to_exhume.push(s);
+            let ncwd = env::current_dir().chain_err(|| "Failed to get current dir")?;
+            if matches.is_present("local") {
+                if let Ok(s) = get_last_bury(record, &ncwd, "local") {
+                    if verbose { verbose!("exhuming", "locally"); }
+                    graves_to_exhume.push(s);
+                }
+            } else {
+                if verbose { verbose!("exhuming", "globally"); }
+                if let Ok(s) = get_last_bury(record, &ncwd, "global") {
+                    graves_to_exhume.push(s);
+                }
             }
             if verbose { verbosed!("exhumed last bury", graves_to_exhume); }
         }
@@ -638,7 +648,9 @@ instead of unlinking them.",
                     syntax, or combine with '-s' to undo all files that have been \
                     removed in current directory. Globbing syntax involves: \
                     *glob, **glob, *.{png,jpg,gif}, and using '!' before all previous \
-                    mentioned globs to negate them.")
+                    mentioned globs to negate them. If '-l' is passed with no arguments, the most \
+                    recently deleted file from '$CWD' will be returned."
+                )
                 .short('u')
                 .long("unbury")
                 .value_name("target")
@@ -660,7 +672,8 @@ instead of unlinking them.",
                     "Undo files that are in the current directory. If the files are in a directory \
                     below the directory that you are in, you have to specify that directory. For example \
                     if you're in a directory with a subdirectory 'src', and a file is in the $GRAVEYARD \
-                    as $GRAVEYARD/$PWD/src/<file>, you must type 'src/<file>' for it to be unburied."
+                    as $GRAVEYARD/$PWD/src/<file>, you must type 'src/<file>' for it to be unburied. \
+                    If a file is not specified, it will return the most recently deleted file from the local directory."
                 )
                 .short('l')
                 .long("local")
@@ -869,24 +882,45 @@ fn copy_file<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> io::Result<(
 /// Return the path in the graveyard of the last file to be buried.
 /// As a side effect, any valid last files that are found in the record but
 /// not on the filesystem are removed from the record.
-fn get_last_bury<R: AsRef<Path>>(record: R) -> io::Result<PathBuf> {
+fn get_last_bury<R>(record: R, cwd: &PathBuf, cwdp: &str) -> io::Result<PathBuf>
+where
+    R: AsRef<Path>,
+{
     let graves_to_exhume: &mut Vec<PathBuf> = &mut Vec::new();
     let mut f = fs::File::open(record.as_ref())?;
     let mut contents = String::new();
     f.read_to_string(&mut contents)?;
 
-    // This could be cleaned up more if/when for loops can return a value
     for entry in contents.lines().rev().map(record_entry) {
-        // Check that the file is still in the graveyard.
-        // If it is, return the corresponding line.
-        if symlink_exists(entry.dest) {
-            if !graves_to_exhume.is_empty() {
-                delete_lines_from_record(f, record, graves_to_exhume)?;
+        if cwdp == "local" {
+            // If local and doesn't contain path to cwd, continue
+            // Trying to exhume file that's not last bury globally, but locally
+            if !entry.dest.to_str().unwrap()
+                .contains(cwd.to_str().unwrap()) {
+                    continue;
+            } else {
+                if symlink_exists(entry.dest) {
+                    if !graves_to_exhume.is_empty() {
+                        delete_lines_from_record(f, record, graves_to_exhume)?;
+                    }
+                    return Ok(PathBuf::from(entry.dest));
+                } else {
+                    // File is gone, mark the grave to be removed from the record
+                    graves_to_exhume.push(PathBuf::from(entry.dest));
+                }
             }
-            return Ok(PathBuf::from(entry.dest));
-        } else {
-            // File is gone, mark the grave to be removed from the record
-            graves_to_exhume.push(PathBuf::from(entry.dest));
+        } else if cwdp == "global" {
+            // Check that the file is still in the graveyard.
+            // If it is, return the corresponding line.
+            if symlink_exists(entry.dest) {
+                if !graves_to_exhume.is_empty() {
+                    delete_lines_from_record(f, record, graves_to_exhume)?;
+                }
+                return Ok(PathBuf::from(entry.dest));
+            } else {
+                // File is gone, mark the grave to be removed from the record
+                graves_to_exhume.push(PathBuf::from(entry.dest));
+            }
         }
     }
 

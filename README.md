@@ -162,13 +162,23 @@ $ rip -u /Users/jack/file1
 Returned /Users/jack/.local/share/graveyard-jack/Users/jack/file1 to /Users/jack/file1
 ```
 
-##### File `l`ocal to current directory
+##### Specifying file `l`ocal to current directory
 ```sh
 $ rip -s
 0  - [2021-07-31 16:40:45] /Users/jack/folder/folder2/file1
 $ pwd
 /Users/jack/folder
 $ rip -lu folder2/file1
+Returned /Users/jack/.local/share/graveyard-jack/Users/jack/folder/folder2/file1 to /Users/jack/folder/folder2/file1
+```
+
+##### Most recent file `l`ocal to current directory
+```sh
+$ rip -s
+0  - [2021-07-31 16:40:45] /Users/jack/folder/folder2/file1
+$ pwd
+/Users/jack/folder
+$ rip -lu
 Returned /Users/jack/.local/share/graveyard-jack/Users/jack/folder/folder2/file1 to /Users/jack/folder/folder2/file1
 ```
 
