@@ -344,10 +344,8 @@ fn run() -> Result<()> {
     if matches.is_present("seance") {
         // If all is passed, list the entire graveyard
         let gravepath = if matches.is_present("all") {
-            if verbose { verbose!("seancing all", true); }
             PathBuf::from(graveyard)
         } else {
-            if verbose { verbose!("seancing all", false); }
             join_absolute(graveyard, cwd)
         };
 
