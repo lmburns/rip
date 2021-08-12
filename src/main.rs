@@ -143,8 +143,8 @@ fn main() {
 
 fn run() -> Result<()> {
     let matches = &cli_rip().get_matches();
-    let nocolor: bool = if matches.is_present("nocolor") { true } else { false };
-    let verbose: bool = if matches.is_present("verbose") { true } else { false };
+    let nocolor: bool = matches.is_present("nocolor");
+    let verbose: bool = matches.is_present("verbose");
 
     let graveyard: &PathBuf = &{
         if let Some(flag) = matches.value_of("graveyard") {
@@ -205,10 +205,9 @@ fn run() -> Result<()> {
     // == UNBURY ==
     if let Some(t) = matches.values_of("unbury") {
         // Maybe a cleaner way? This is to detect if a glob is given (*glob, **glob)
-        let glob = if t.clone()
-            .nth(0)
+        let glob = t.clone().next()
             .unwrap_or("None")
-            .contains("*") { true } else { false };
+            .contains('*');
 
         if verbose { verbose!("globbing", glob); }
 
@@ -227,13 +226,13 @@ fn run() -> Result<()> {
 
                 if matches.is_present("local") {
                     glob_walk(
-                        &t.clone().nth(0).unwrap(),
+                        t.clone().next().unwrap(),
                         join_absolute(&graveyard, &cwd),
                         max_d
                     )
                 } else {
                     glob_walk(
-                        &t.clone().nth(0).unwrap(),
+                        t.clone().next().unwrap(),
                         &graveyard,
                         max_d
                     )
@@ -247,23 +246,21 @@ fn run() -> Result<()> {
                             PathBuf::from(file)
                         )
                     ).collect::<Vec<PathBuf>>()
+                } else if matches.value_of("unbury")
+                    .unwrap_or("None")
+                    .to_string()
+                    .contains(graveyard.to_str().unwrap())
+                {
+                    // Full path given (including graveyard)
+                    t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
                 } else {
-                    if matches.value_of("unbury")
-                        .unwrap_or("None")
-                        .to_string()
-                        .contains(graveyard.to_str().unwrap())
-                    {
-                        // Full path given (including graveyard)
-                        t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
-                    } else {
-                        // Full path given (excluding graveyard, i.e., starting from $HOME)
-                        t.clone().map(|file|
-                            join_absolute(
-                                graveyard,
-                                PathBuf::from(file)
-                            )
-                        ).collect::<Vec<PathBuf>>()
-                    }
+                    // Full path given (excluding graveyard, i.e., starting from $HOME)
+                    t.clone().map(|file|
+                        join_absolute(
+                            graveyard,
+                            PathBuf::from(file)
+                        )
+                    ).collect::<Vec<PathBuf>>()
                 }
             }
         };
@@ -362,7 +359,7 @@ fn run() -> Result<()> {
                     let time: DateTime<Local> = v.into();
                     format!("{}", time.format("%Y-%m-%d %T")).to_string()
                 },
-                _ => format!("N/A")
+                _ => "N/A".to_string()
             };
 
             let otype = file_type(&grave);
@@ -522,9 +519,9 @@ fn run() -> Result<()> {
                 };
 
                 bury(source, dest)
-                    .or_else(|e| {
+                    .map_err(|e| {
                         fs::remove_dir_all(dest).ok();
-                        Err(e)
+                        e
                     })
                     .chain_err(|| "Failed to bury file")?;
                 // Clean up any partial buries due to permission error
@@ -721,7 +718,7 @@ pub fn print_completions<G: Generator>(app: &mut App, cursor: &mut Cursor<Vec<u8
 }
 
 /// Get the file's file type for displaying it
-fn file_type(p: &PathBuf) -> String {
+fn file_type(p: &Path) -> String {
     if fs::metadata(p).unwrap().is_file() { String::from("file") }
     else if fs::metadata(p).unwrap().is_dir() { String::from("dir") }
     else { String::from("other") }
@@ -878,7 +875,7 @@ fn copy_file<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> io::Result<(
 /// Return the path in the graveyard of the last file to be buried.
 /// As a side effect, any valid last files that are found in the record but
 /// not on the filesystem are removed from the record.
-fn get_last_bury<R>(record: R, cwd: &PathBuf, cwdp: &str) -> io::Result<PathBuf>
+fn get_last_bury<R>(record: R, cwd: &Path, cwdp: &str) -> io::Result<PathBuf>
 where
     R: AsRef<Path>,
 {
@@ -894,16 +891,14 @@ where
             if !entry.dest.to_str().unwrap()
                 .contains(cwd.to_str().unwrap()) {
                     continue;
-            } else {
-                if symlink_exists(entry.dest) {
-                    if !graves_to_exhume.is_empty() {
-                        delete_lines_from_record(f, record, graves_to_exhume)?;
-                    }
-                    return Ok(PathBuf::from(entry.dest));
-                } else {
-                    // File is gone, mark the grave to be removed from the record
-                    graves_to_exhume.push(PathBuf::from(entry.dest));
+            } else if symlink_exists(entry.dest) {
+                if !graves_to_exhume.is_empty() {
+                    delete_lines_from_record(f, record, graves_to_exhume)?;
                 }
+                return Ok(PathBuf::from(entry.dest));
+            } else {
+                // File is gone, mark the grave to be removed from the record
+                graves_to_exhume.push(PathBuf::from(entry.dest));
             }
         } else if cwdp == "global" {
             // Check that the file is still in the graveyard.
@@ -939,14 +934,13 @@ fn record_entry(line: &str) -> RecordItem {
     }
 }
 
-// NOTE: To self, -> impl Trait = "Type returned will implement this trait and that's all"
-
 /// Takes a vector of grave paths and returns the respective lines in the record
+#[allow(clippy::needless_lifetimes)]
 fn lines_of_graves<'a>(f: fs::File, graves: &'a [PathBuf]) -> impl Iterator<Item = String> + 'a {
     BufReader::new(f)
         .lines()
         .filter_map(|l| l.ok())
-        .filter(move |l| graves.into_iter().any(|y| y == record_entry(l).dest))
+        .filter(move |l| graves.iter().any(|y| y == record_entry(l).dest))
 }
 
 /// Returns an iterator over all graves in the record that are under gravepath
@@ -971,7 +965,7 @@ fn delete_lines_from_record<R: AsRef<Path>>(
     let lines_to_write: Vec<String> = BufReader::new(f)
         .lines()
         .filter_map(|l| l.ok())
-        .filter(|l| !graves.into_iter().any(|y| y == record_entry(l).dest))
+        .filter(|l| !graves.iter().any(|y| y == record_entry(l).dest))
         .collect();
     let mut f = fs::File::create(record)?;
     for line in lines_to_write {
