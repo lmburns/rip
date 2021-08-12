@@ -1,10 +1,10 @@
 [package]
 edition = '2018'
 name = "rm-improved"
-version = "0.13.4"
+version = "0.13.8"
 authors = ["nivekuil <mail@nivekuil.com>", "Lucas Burns <lmb@lmburns.com>"]
 description = "rip: a safe and ergonomic alternative to rm (fork)"
-repository = "https://github.com/nivekuil/rip"
+repository = "https://github.com/lmburns/rip"
 readme = "README.md"
 license = "GPL-3.0+"
 include = [

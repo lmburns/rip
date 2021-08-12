@@ -16,10 +16,9 @@ use clap_generate::{
 };
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read, Write, Cursor},
     os::unix::fs::{FileTypeExt, PermissionsExt},
     path::{Path, PathBuf},
-    io::Cursor,
     env,
     fs,
     io,
@@ -182,7 +181,6 @@ fn run() -> Result<()> {
                 let mut contents = String::new();
                 f.read_to_string(&mut contents)?;
 
-                // This could be cleaned up more if/when for loops can return a value
                 for entry in contents.lines().map(record_entry) {
                     writeln!(tab_handle, "{}\t{}",
                         fmt_exp!(entry.orig, cyan),
