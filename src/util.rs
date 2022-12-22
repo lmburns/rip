@@ -18,13 +18,16 @@ fn get_user() -> String {
 
 /// Prompt for user input, returning True if the first character is 'y' or 'Y'
 fn prompt_yes<T: AsRef<str>>(prompt: T) -> bool {
-    print!("{} [{}/{}] ", prompt.as_ref(),
+    print!(
+        "{} [{}/{}] ",
+        prompt.as_ref(),
         "y".green().bold(),
         "N".red().bold()
     );
     if io::stdout().flush().is_err() {
         // If stdout wasn't flushed properly, fallback to println
-        println!("{} [{}/{}]",
+        println!(
+            "{} [{}/{}]",
             prompt.as_ref(),
             "y".green().bold(),
             "N".red().bold()
@@ -58,11 +61,7 @@ fn humanize_bytes(bytes: u64) -> String {
         .take_while(|x| bytes as usize / 1000_usize.pow(x.0 as u32) > 10)
         .last();
     if let Some((i, unit)) = pair {
-        format!(
-            "{} {}",
-            bytes as usize / 1000_usize.pow(i as u32),
-            unit
-        )
+        format!("{} {}", bytes as usize / 1000_usize.pow(i as u32), unit)
     } else {
         format!("{} {}", bytes, values[0])
     }

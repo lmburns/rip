@@ -3,28 +3,22 @@ extern crate clap;
 extern crate core;
 #[macro_use]
 extern crate error_chain;
-extern crate time;
-extern crate walkdir;
 extern crate globwalk;
 extern crate tabwriter;
+extern crate time;
+extern crate walkdir;
 
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
-use clap_generate::{
-    generators::*,
-    generate,
-    Generator,
-};
+use clap_generate::{generate, generators::*, Generator};
 
+use globwalk::{GlobWalker, GlobWalkerBuilder};
 use std::{
-    io::{BufRead, BufReader, Read, Write, Cursor},
+    env, fs, io,
+    io::{BufRead, BufReader, Cursor, Read, Write},
     os::unix::fs::{FileTypeExt, PermissionsExt},
     path::{Path, PathBuf},
-    env,
-    fs,
-    io,
 };
 use walkdir::WalkDir;
-use globwalk::{GlobWalker, GlobWalkerBuilder};
 
 use chrono::offset::Local;
 use chrono::DateTime;
@@ -55,8 +49,8 @@ mod errors {
     }
 }
 
-use errors::*;
 use colored::*;
+use errors::*;
 
 mod comp_helper;
 include!("util.rs");
@@ -70,7 +64,8 @@ macro_rules! fmt_exp {
 // These are somewhat treated as log::debug, etc
 macro_rules! verbose {
     ($e:expr,$v:expr) => {
-        println!("{}: {}",
+        println!(
+            "{}: {}",
             $e.to_string().to_uppercase().green().bold(),
             $v.to_string().yellow()
         )
@@ -79,7 +74,8 @@ macro_rules! verbose {
 
 macro_rules! verbosed {
     ($e:expr,$v:expr) => {
-        println!("{}: {:#?}",
+        println!(
+            "{}: {:#?}",
             $e.to_string().to_uppercase().green().bold(),
             $v
         )
@@ -163,7 +159,9 @@ fn run() -> Result<()> {
     }
     .into();
 
-    if verbose { verbose!("graveyard", graveyard.display()); }
+    if verbose {
+        verbose!("graveyard", graveyard.display());
+    }
 
     if matches.is_present("decompose") {
         if prompt_yes("Really unlink the entire graveyard?") {
@@ -174,22 +172,31 @@ fn run() -> Result<()> {
                 let handle = io::BufWriter::new(std_lock);
                 let mut tab_handle = tabwriter::TabWriter::new(handle);
 
-                writeln!(tab_handle, "{}\t{}", "File".cyan().bold(), "Type".bright_red().bold())?;
-                writeln!(tab_handle, "{}\t{}", "----".cyan().bold(), "----".bright_red().bold())?;
+                writeln!(
+                    tab_handle,
+                    "{}\t{}",
+                    "File".cyan().bold(),
+                    "Type".bright_red().bold()
+                )?;
+                writeln!(
+                    tab_handle,
+                    "{}\t{}",
+                    "----".cyan().bold(),
+                    "----".bright_red().bold()
+                )?;
 
                 let mut f = fs::File::open(&graveyard.join(RECORD))?;
                 let mut contents = String::new();
                 f.read_to_string(&mut contents)?;
 
                 for entry in contents.lines().map(record_entry) {
-                    writeln!(tab_handle, "{}\t{}",
+                    writeln!(
+                        tab_handle,
+                        "{}\t{}",
                         fmt_exp!(entry.orig, cyan),
-                        file_type(
-                            &join_absolute(
-                                &graveyard,
-                                PathBuf::from(entry.orig),
-                            )
-                        ).bright_red().bold(),
+                        file_type(&join_absolute(&graveyard, PathBuf::from(entry.orig),))
+                            .bright_red()
+                            .bold(),
                     )?;
                 }
                 tab_handle.flush()?;
@@ -205,11 +212,11 @@ fn run() -> Result<()> {
     // == UNBURY ==
     if let Some(t) = matches.values_of("unbury") {
         // Maybe a cleaner way? This is to detect if a glob is given (*glob, **glob)
-        let glob = t.clone().next()
-            .unwrap_or("None")
-            .contains('*');
+        let glob = t.clone().next().unwrap_or("None").contains('*');
 
-        if verbose { verbose!("globbing", glob); }
+        if verbose {
+            verbose!("globbing", glob);
+        }
 
         // Vector to hold the grave path of items we want to unbury.
         // This will be used to determine which items to remove from the
@@ -222,31 +229,29 @@ fn run() -> Result<()> {
                 } else {
                     DEFAULT_MAX_DEPTH
                 };
-                if verbose { verbose!("max depth", max_d); }
+                if verbose {
+                    verbose!("max depth", max_d);
+                }
 
                 if matches.is_present("local") {
                     glob_walk(
                         t.clone().next().unwrap(),
                         join_absolute(&graveyard, &cwd),
-                        max_d
+                        max_d,
                     )
                 } else {
-                    glob_walk(
-                        t.clone().next().unwrap(),
-                        &graveyard,
-                        max_d
-                    )
+                    glob_walk(t.clone().next().unwrap(), &graveyard, max_d)
                 }
             } else {
                 // Match files in local directory
                 if matches.is_present("local") {
-                    t.clone().map(|file|
-                        join_absolute(
-                            join_absolute(graveyard, &cwd),
-                            PathBuf::from(file)
-                        )
-                    ).collect::<Vec<PathBuf>>()
-                } else if matches.value_of("unbury")
+                    t.clone()
+                        .map(|file| {
+                            join_absolute(join_absolute(graveyard, &cwd), PathBuf::from(file))
+                        })
+                        .collect::<Vec<PathBuf>>()
+                } else if matches
+                    .value_of("unbury")
                     .unwrap_or("None")
                     .to_string()
                     .contains(graveyard.to_str().unwrap())
@@ -255,17 +260,16 @@ fn run() -> Result<()> {
                     t.clone().map(PathBuf::from).collect::<Vec<PathBuf>>()
                 } else {
                     // Full path given (excluding graveyard, i.e., starting from $HOME)
-                    t.clone().map(|file|
-                        join_absolute(
-                            graveyard,
-                            PathBuf::from(file)
-                        )
-                    ).collect::<Vec<PathBuf>>()
+                    t.clone()
+                        .map(|file| join_absolute(graveyard, PathBuf::from(file)))
+                        .collect::<Vec<PathBuf>>()
                 }
             }
         };
 
-        if verbose { verbosed!("exhumed cli matches", graves_to_exhume); }
+        if verbose {
+            verbosed!("exhumed cli matches", graves_to_exhume);
+        }
         // If -s is also passed, push all files found by seance onto
         // the graves_to_exhume.
         if matches.is_present("seance") {
@@ -275,7 +279,9 @@ fn run() -> Result<()> {
                     graves_to_exhume.push(grave);
                 }
             }
-            if verbose { verbosed!("exhumed after seance", graves_to_exhume); }
+            if verbose {
+                verbosed!("exhumed after seance", graves_to_exhume);
+            }
         }
 
         // Otherwise, add the last deleted file, globally or locally
@@ -283,16 +289,22 @@ fn run() -> Result<()> {
             let ncwd = env::current_dir().chain_err(|| "Failed to get current dir")?;
             if matches.is_present("local") {
                 if let Ok(s) = get_last_bury(record, &ncwd, "local") {
-                    if verbose { verbose!("exhuming", "locally"); }
+                    if verbose {
+                        verbose!("exhuming", "locally");
+                    }
                     graves_to_exhume.push(s);
                 }
             } else {
-                if verbose { verbose!("exhuming", "globally"); }
+                if verbose {
+                    verbose!("exhuming", "globally");
+                }
                 if let Ok(s) = get_last_bury(record, &ncwd, "global") {
                     graves_to_exhume.push(s);
                 }
             }
-            if verbose { verbosed!("exhumed last bury", graves_to_exhume); }
+            if verbose {
+                verbosed!("exhumed last bury", graves_to_exhume);
+            }
         }
 
         // Go through the graveyard and exhume all the graves
@@ -315,8 +327,11 @@ fn run() -> Result<()> {
             })?;
             // Replaces value of $GRAVEYARD with the variable name because it is so long
             if matches.is_present("fullpath") {
-                println!("Returned {} to {}",
-                    entry.dest.display()
+                println!(
+                    "Returned {} to {}",
+                    entry
+                        .dest
+                        .display()
                         .to_string()
                         .replace(graveyard.to_str().unwrap(), "$GRAVEYARD")
                         .magenta()
@@ -358,8 +373,8 @@ fn run() -> Result<()> {
                 Ok(v) => {
                     let time: DateTime<Local> = v.into();
                     format!("{}", time.format("%Y-%m-%d %T")).to_string()
-                },
-                _ => "N/A".to_string()
+                }
+                _ => "N/A".to_string(),
             };
 
             let otype = file_type(&grave);
@@ -369,20 +384,31 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", grave.display().to_string());
                     } else {
-                        writeln!(tab_handle, "{}\t{}\t{}\t{}",
-                            i.to_string(), created, otype, grave.display()
+                        writeln!(
+                            tab_handle,
+                            "{}\t{}\t{}\t{}",
+                            i.to_string(),
+                            created,
+                            otype,
+                            grave.display()
                         )?;
                     }
                 } else {
-                    let shortened = grave.display()
-                                         .to_string()
-                                         .replace(graveyard.to_str().unwrap(), "");
+                    let shortened = grave
+                        .display()
+                        .to_string()
+                        .replace(graveyard.to_str().unwrap(), "");
 
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        writeln!(tab_handle, "{}\t{}\t{}\t{}",
-                            i.to_string(), created, otype, shortened
+                        writeln!(
+                            tab_handle,
+                            "{}\t{}\t{}\t{}",
+                            i.to_string(),
+                            created,
+                            otype,
+                            shortened
                         )?;
                     }
                 }
@@ -396,7 +422,9 @@ fn run() -> Result<()> {
                     if matches.is_present("plain") {
                         println!("{}", fmt_exp!(grave, yellow));
                     } else {
-                        writeln!(tab_handle, "{}\t{}\t{:<5}\t{}",
+                        writeln!(
+                            tab_handle,
+                            "{}\t{}\t{:<5}\t{}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
                             otype.bright_red().bold(),
@@ -404,15 +432,19 @@ fn run() -> Result<()> {
                         )?;
                     }
                 } else {
-                    let shortened = grave.display()
-                                .to_string()
-                                .replace(graveyard.to_str().unwrap(), "")
-                                .yellow().bold();
+                    let shortened = grave
+                        .display()
+                        .to_string()
+                        .replace(graveyard.to_str().unwrap(), "")
+                        .yellow()
+                        .bold();
 
                     if matches.is_present("plain") {
                         println!("{}", shortened);
                     } else {
-                        writeln!(tab_handle, "{}\t{}\t{:<5}\t{}",
+                        writeln!(
+                            tab_handle,
+                            "{}\t{}\t{:<5}\t{}",
                             i.to_string().green().bold(),
                             created.magenta().bold(),
                             otype.bright_red().bold(),
@@ -452,7 +484,9 @@ fn run() -> Result<()> {
                                     .filter_map(|x| x.metadata().ok())
                                     .map(|x| x.len())
                                     .sum::<u64>()
-                            ).green().bold()
+                            )
+                            .green()
+                            .bold()
                         );
 
                         // Print the first few top-level files in the directory
@@ -466,7 +500,8 @@ fn run() -> Result<()> {
                             println!("{}", entry.path().display());
                         }
                     } else {
-                        println!("{}: file, {}",
+                        println!(
+                            "{}: file, {}",
                             target.magenta().bold(),
                             humanize_bytes(metadata.len()).green().bold()
                         );
@@ -480,14 +515,17 @@ fn run() -> Result<()> {
                                 println!("> {}", line);
                             }
                         } else {
-                            println!("{}: problem reading {}",
+                            println!(
+                                "{}: problem reading {}",
                                 "Error".red().bold(),
                                 fmt_exp!(source, magenta)
                             );
                         }
                     }
-                    if !prompt_yes(format!("Send {} to the graveyard?",
-                            target.magenta().bold())) {
+                    if !prompt_yes(format!(
+                        "Send {} to the graveyard?",
+                        target.magenta().bold()
+                    )) {
                         continue;
                     }
                 }
@@ -495,8 +533,10 @@ fn run() -> Result<()> {
                 // If rip is called on a file already in the graveyard, prompt
                 // to permanently delete it instead.
                 if source.starts_with(graveyard) {
-                    println!("{} is already in the graveyard.",
-                        source.display().to_string().magenta().bold());
+                    println!(
+                        "{} is already in the graveyard.",
+                        source.display().to_string().magenta().bold()
+                    );
                     if prompt_yes("Permanently unlink it?") {
                         if fs::remove_dir_all(source).is_err() {
                             fs::remove_file(source).chain_err(|| "Couldn't unlink")?;
@@ -534,9 +574,7 @@ fn run() -> Result<()> {
     }
 
     if let Some(matches) = matches.subcommand_matches("completions") {
-        let shell = matches.value_of("shell")
-            .unwrap()
-            .parse::<Shell>()?;
+        let shell = matches.value_of("shell").unwrap().parse::<Shell>()?;
 
         let buffer = Vec::new();
         let mut cursor = Cursor::new(buffer);
@@ -551,8 +589,7 @@ fn run() -> Result<()> {
         }
 
         let buffer = cursor.into_inner();
-        let mut script = String::from_utf8(buffer)
-            .expect("Clap completion not UTF-8");
+        let mut script = String::from_utf8(buffer).expect("Clap completion not UTF-8");
 
         // Modify the Zsh completions before printing them out
         match shell {
@@ -560,7 +597,7 @@ fn run() -> Result<()> {
                 for (needle, replacement) in comp_helper::ZSH_COMPLETION_REP {
                     replace(&mut script, needle, replacement)?;
                 }
-            },
+            }
             _ => println!(),
         }
 
@@ -719,26 +756,26 @@ pub fn print_completions<G: Generator>(app: &mut App, cursor: &mut Cursor<Vec<u8
 
 /// Get the file's file type for displaying it
 fn file_type(p: &Path) -> String {
-    if fs::metadata(p).unwrap().is_file() { String::from("file") }
-    else if fs::metadata(p).unwrap().is_dir() { String::from("dir") }
-    else { String::from("other") }
+    if fs::metadata(p).unwrap().is_file() {
+        String::from("file")
+    } else if fs::metadata(p).unwrap().is_dir() {
+        String::from("dir")
+    } else {
+        String::from("other")
+    }
 }
 
 /// Replace parts of completions output
-fn replace(
-    haystack: &mut String,
-    needle: &str,
-    replacement: &str
-) -> Result<()> {
+fn replace(haystack: &mut String, needle: &str, replacement: &str) -> Result<()> {
     if let Some(index) = haystack.find(needle) {
         haystack.replace_range(index..index + needle.len(), replacement);
         Ok(())
     } else {
         Err(ErrorKind::MismatchedCompletion(
-                needle.to_string().red().bold(),
-                haystack.to_string().green().bold()
-            ).into()
+            needle.to_string().red().bold(),
+            haystack.to_string().green().bold(),
         )
+        .into())
     }
 }
 
@@ -888,9 +925,8 @@ where
         if cwdp == "local" {
             // If local and doesn't contain path to cwd, continue
             // Trying to exhume file that's not last bury globally, but locally
-            if !entry.dest.to_str().unwrap()
-                .contains(cwd.to_str().unwrap()) {
-                    continue;
+            if !entry.dest.to_str().unwrap().contains(cwd.to_str().unwrap()) {
+                continue;
             } else if symlink_exists(entry.dest) {
                 if !graves_to_exhume.is_empty() {
                     delete_lines_from_record(f, record, graves_to_exhume)?;
@@ -981,37 +1017,24 @@ fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> Result<GlobWalker>
 where
     S: AsRef<str>,
 {
-    let builder = GlobWalkerBuilder::new(
-        base.as_ref(),
-        pattern.as_ref()
-    );
+    let builder = GlobWalkerBuilder::new(base.as_ref(), pattern.as_ref());
 
     builder
         .max_depth(max_depth)
         .build()
-        .map_err(|e|
-            Error::with_chain(e, "Invalid data")
-        )
+        .map_err(|e| Error::with_chain(e, "Invalid data"))
 }
 
 /// Implement the glob_walker function, pushing each result to a Vec<PathBuf> and returning
 /// this vector
-fn glob_walk<P>(
-    pattern: &str,
-    base_path: P,
-    max_depth: usize,
-) -> Vec<PathBuf>
+fn glob_walk<P>(pattern: &str, base_path: P, max_depth: usize) -> Vec<PathBuf>
 where
     P: AsRef<Path>,
 {
     let mut globbed_paths: Vec<PathBuf> = Vec::new();
     let base_path = base_path.as_ref().to_string_lossy().to_string();
 
-    for entry in glob_walker(
-        base_path.as_str(),
-        pattern,
-        max_depth
-        )
+    for entry in glob_walker(base_path.as_str(), pattern, max_depth)
         .unwrap()
         .flatten()
     {

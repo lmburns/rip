@@ -33,7 +33,7 @@ _arguments "${_arguments_options[@]}" \
         esac
     ;;
 esac"#,
-    r#""#,
+        r#""#,
     ),
     (
         "(( $+functions[_rip_commands] )) ||
@@ -60,6 +60,6 @@ _rip__help_commands() {
 }
 
 _rip \"$@\"",
-        r#"_rip "$@""#
-    )
+        r#"_rip "$@""#,
+    ),
 ];
