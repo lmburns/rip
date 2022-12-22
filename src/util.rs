@@ -12,6 +12,13 @@ fn symlink_exists<P: AsRef<Path>>(path: P) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
+fn parent_file_exists<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
+    path.as_ref()
+        .ancestors()
+        .find(|ancestor| ancestor.is_file())
+        .map(|ancestor| ancestor.to_path_buf())
+}
+
 fn get_user() -> String {
     env::var("USER").unwrap_or_else(|_| String::from("unknown"))
 }

@@ -553,6 +553,12 @@ fn run() -> Result<()> {
                     // Resolve a name conflict if necessary
                     if symlink_exists(&dest) {
                         rename_grave(dest)
+                    } else if let Some(ancestor_file) = parent_file_exists(&dest) {
+                        let new_ancestor = rename_grave(&ancestor_file);
+                        let relative_dest = dest.strip_prefix(&ancestor_file).chain_err(|| {
+                            "Parent directory isn't a prefix of child directories?"
+                        })?;
+                        join_absolute(new_ancestor, relative_dest)
                     } else {
                         dest
                     }
