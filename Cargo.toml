@@ -28,7 +28,8 @@ clap_generate = "3.0.0-beta.2"
 tabwriter = "1.2.1"
 
 [profile.release]
-opt-level = "s"
+strip = true
+lto = "thin"
 
 [[bin]]
 name = "rip"
