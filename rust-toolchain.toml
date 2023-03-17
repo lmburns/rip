@@ -1,4 +1,4 @@
 [toolchain]
-channel = "nightly"
+channel = "stable"
 components = [ "rust-src", "clippy", "rustfmt", "rust-analysis" ]
 targets = [ "x86_64-unknown-linux-musl" ]
