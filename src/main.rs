@@ -1,3 +1,6 @@
+#![deny(clippy::all)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::cast_possible_truncation)]
 #![allow(dead_code)]
 extern crate clap;
 extern crate core;
@@ -9,7 +12,11 @@ extern crate time;
 extern crate walkdir;
 
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
-use clap_generate::{generate, generators::*, Generator};
+use clap_generate::{
+    generate,
+    generators::{Bash, Elvish, Fish, PowerShell, Zsh},
+    Generator,
+};
 
 use globwalk::{GlobWalker, GlobWalkerBuilder};
 use std::{
@@ -23,37 +30,18 @@ use walkdir::WalkDir;
 use chrono::offset::Local;
 use chrono::DateTime;
 
-// use thiserror::Error;
-// use anyhow::{Context, Result};
+mod errors;
 
-mod errors {
-    error_chain! {
-        foreign_links {
-           IoError(::std::io::Error);
-          }
-
-        errors {
-            MismatchedCompletion(n: colored::ColoredString, h: colored::ColoredString) {
-                description("unable to find completion text matching clap::Shell")
-                display(
-                    "Failed to find text:\n{}\n…in completion script:\n{}",
-                    n, h
-                )
-            }
-
-            InvalidShell(s: colored::ColoredString) {
-                description("invalid shell entered"),
-                display("Invalid shell: {}", s)
-            }
-        }
-    }
-}
-
-use colored::*;
-use errors::*;
+use colored::Colorize;
+use errors::{Error, ErrorKind, Result, ResultExt};
 
 mod comp_helper;
-include!("util.rs");
+mod util;
+
+use util::{
+    get_user, humanize_bytes, join_absolute, parent_file_exists, prompt_yes, rename_grave,
+    symlink_exists,
+};
 
 macro_rules! fmt_exp {
     ($a:expr,$b:ident) => {
@@ -86,7 +74,7 @@ const GRAVEYARD: &str = "/tmp/graveyard";
 const RECORD: &str = ".record";
 const LINES_TO_INSPECT: usize = 6;
 const FILES_TO_INSPECT: usize = 6;
-const BIG_FILE_THRESHOLD: u64 = 500000000; // 500 MB
+const BIG_FILE_THRESHOLD: u64 = 500_000_000; // 500 MB
 const DEFAULT_MAX_DEPTH: usize = 10; // 10 because $HOME/.local/share/graveyard is already pretty deep
 
 struct RecordItem<'a> {
@@ -123,14 +111,14 @@ fn main() {
         let stderr = &mut ::std::io::stderr();
         let errmsg = "Error writing to stderr";
 
-        writeln!(stderr, "error: {}", e).expect(errmsg);
+        writeln!(stderr, "error: {e}").expect(errmsg);
 
         for e in e.iter().skip(1) {
-            writeln!(stderr, "caused by: {}", e).expect(errmsg);
+            writeln!(stderr, "caused by: {e}").expect(errmsg);
         }
 
         if let Some(backtrace) = e.backtrace() {
-            writeln!(stderr, "backtrace: {:?}", backtrace).expect(errmsg);
+            writeln!(stderr, "backtrace: {backtrace:?}").expect(errmsg);
         }
 
         ::std::process::exit(1);
@@ -165,7 +153,6 @@ fn run() -> Result<()> {
 
     if matches.is_present("decompose") {
         if prompt_yes("Really unlink the entire graveyard?") {
-            // let dir = fs::read_dir(graveyard).chain_err(|| "Couldn't read dir")?;
             if verbose {
                 let stdout = io::stdout();
                 let std_lock = stdout.lock();
@@ -194,7 +181,7 @@ fn run() -> Result<()> {
                         tab_handle,
                         "{}\t{}",
                         fmt_exp!(entry.orig, cyan),
-                        file_type(&join_absolute(&graveyard, PathBuf::from(entry.orig),))
+                        file_type(&join_absolute(graveyard, PathBuf::from(entry.orig),))
                             .bright_red()
                             .bold(),
                     )?;
@@ -236,11 +223,11 @@ fn run() -> Result<()> {
                 if matches.is_present("local") {
                     glob_walk(
                         t.clone().next().unwrap(),
-                        join_absolute(&graveyard, &cwd),
+                        join_absolute(graveyard, &cwd),
                         max_d,
                     )
                 } else {
-                    glob_walk(t.clone().next().unwrap(), &graveyard, max_d)
+                    glob_walk(t.clone().next().unwrap(), graveyard, max_d)
                 }
             } else {
                 // Match files in local directory
@@ -286,9 +273,9 @@ fn run() -> Result<()> {
 
         // Otherwise, add the last deleted file, globally or locally
         if graves_to_exhume.is_empty() {
-            let ncwd = env::current_dir().chain_err(|| "Failed to get current dir")?;
+            let new_cwd = env::current_dir().chain_err(|| "Failed to get current dir")?;
             if matches.is_present("local") {
-                if let Ok(s) = get_last_bury(record, &ncwd, "local") {
+                if let Ok(s) = get_last_bury(record, &new_cwd, "local") {
                     if verbose {
                         verbose!("exhuming", "locally");
                     }
@@ -298,7 +285,7 @@ fn run() -> Result<()> {
                 if verbose {
                     verbose!("exhuming", "globally");
                 }
-                if let Ok(s) = get_last_bury(record, &ncwd, "global") {
+                if let Ok(s) = get_last_bury(record, &new_cwd, "global") {
                     graves_to_exhume.push(s);
                 }
             }
@@ -382,12 +369,12 @@ fn run() -> Result<()> {
             if nocolor {
                 if matches.is_present("fullpath") {
                     if matches.is_present("plain") {
-                        println!("{}", grave.display().to_string());
+                        println!("{}", grave.display());
                     } else {
                         writeln!(
                             tab_handle,
                             "{}\t{}\t{}\t{}",
-                            i.to_string(),
+                            i,
                             created,
                             otype,
                             grave.display()
@@ -400,16 +387,9 @@ fn run() -> Result<()> {
                         .replace(graveyard.to_str().unwrap(), "");
 
                     if matches.is_present("plain") {
-                        println!("{}", shortened);
+                        println!("{shortened}");
                     } else {
-                        writeln!(
-                            tab_handle,
-                            "{}\t{}\t{}\t{}",
-                            i.to_string(),
-                            created,
-                            otype,
-                            shortened
-                        )?;
+                        writeln!(tab_handle, "{i}\t{created}\t{otype}\t{shortened}")?;
                     }
                 }
             } else {
@@ -440,7 +420,7 @@ fn run() -> Result<()> {
                         .bold();
 
                     if matches.is_present("plain") {
-                        println!("{}", shortened);
+                        println!("{shortened}");
                     } else {
                         writeln!(
                             tab_handle,
@@ -463,12 +443,12 @@ fn run() -> Result<()> {
             // Check if source exists
             if let Ok(metadata) = fs::symlink_metadata(target) {
                 // Canonicalize the path unless it's a symlink
-                let source = &if !metadata.file_type().is_symlink() {
+                let source = &if metadata.file_type().is_symlink() {
+                    cwd.join(target)
+                } else {
                     cwd.join(target)
                         .canonicalize()
                         .chain_err(|| "Failed to canonicalize path")?
-                } else {
-                    cwd.join(target)
                 };
 
                 if matches.is_present("inspect") {
@@ -480,7 +460,7 @@ fn run() -> Result<()> {
                             humanize_bytes(
                                 WalkDir::new(source)
                                     .into_iter()
-                                    .filter_map(|x| x.ok())
+                                    .filter_map(std::result::Result::ok)
                                     .filter_map(|x| x.metadata().ok())
                                     .map(|x| x.len())
                                     .sum::<u64>()
@@ -494,7 +474,7 @@ fn run() -> Result<()> {
                             .min_depth(1)
                             .max_depth(1)
                             .into_iter()
-                            .filter_map(|entry| entry.ok())
+                            .filter_map(std::result::Result::ok)
                             .take(FILES_TO_INSPECT)
                         {
                             println!("{}", entry.path().display());
@@ -510,9 +490,9 @@ fn run() -> Result<()> {
                             for line in BufReader::new(f)
                                 .lines()
                                 .take(LINES_TO_INSPECT)
-                                .filter_map(|line| line.ok())
+                                .filter_map(std::result::Result::ok)
                             {
-                                println!("> {}", line);
+                                println!("> {line}");
                             }
                         } else {
                             println!(
@@ -537,14 +517,13 @@ fn run() -> Result<()> {
                         "{} is already in the graveyard.",
                         source.display().to_string().magenta().bold()
                     );
-                    if prompt_yes("Permanently unlink it?") {
-                        if fs::remove_dir_all(source).is_err() {
-                            fs::remove_file(source).chain_err(|| "Couldn't unlink")?;
-                        }
-                        continue;
-                    } else {
+                    if !prompt_yes("Permanently unlink it?") {
                         println!("Skipping {}", fmt_exp!(source, magenta));
                         return Ok(());
+                    }
+
+                    if fs::remove_dir_all(source).is_err() {
+                        fs::remove_file(source).chain_err(|| "Couldn't unlink")?;
                     }
                 }
 
@@ -607,7 +586,7 @@ fn run() -> Result<()> {
             _ => println!(),
         }
 
-        println!("{}", script.trim())
+        println!("{}", script.trim());
     }
 
     Ok(())
@@ -779,7 +758,7 @@ fn replace(haystack: &mut String, needle: &str, replacement: &str) -> Result<()>
     } else {
         Err(ErrorKind::MismatchedCompletion(
             needle.to_string().red().bold(),
-            haystack.to_string().green().bold(),
+            (*haystack).green().bold(),
         )
         .into())
     }
@@ -827,7 +806,10 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
         // for x in globwalk::glob() {
         // }
         // Walk the source, creating directories and copying files as needed
-        for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(source)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+        {
             // Path without the top-level directory
             let orphan: &Path = entry
                 .path()
@@ -885,10 +867,7 @@ fn copy_file<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> io::Result<(
     }
 
     if filetype.is_file() {
-        if let Err(e) = fs::copy(source, dest) {
-            // println!("Failed to copy {} to {}", source.display(), dest.display());
-            return Err(e);
-        }
+        fs::copy(source, dest)?;
     } else if filetype.is_fifo() {
         let mode = metadata.permissions().mode();
         std::process::Command::new("mkfifo")
@@ -938,10 +917,10 @@ where
                     delete_lines_from_record(f, record, graves_to_exhume)?;
                 }
                 return Ok(PathBuf::from(entry.dest));
-            } else {
-                // File is gone, mark the grave to be removed from the record
-                graves_to_exhume.push(PathBuf::from(entry.dest));
             }
+
+            // File is gone, mark the grave to be removed from the record
+            graves_to_exhume.push(PathBuf::from(entry.dest));
         } else if cwdp == "global" {
             // Check that the file is still in the graveyard.
             // If it is, return the corresponding line.
@@ -950,10 +929,10 @@ where
                     delete_lines_from_record(f, record, graves_to_exhume)?;
                 }
                 return Ok(PathBuf::from(entry.dest));
-            } else {
-                // File is gone, mark the grave to be removed from the record
-                graves_to_exhume.push(PathBuf::from(entry.dest));
             }
+
+            // File is gone, mark the grave to be removed from the record
+            graves_to_exhume.push(PathBuf::from(entry.dest));
         }
     }
 
@@ -981,7 +960,7 @@ fn record_entry(line: &str) -> RecordItem {
 fn lines_of_graves<'a>(f: fs::File, graves: &'a [PathBuf]) -> impl Iterator<Item = String> + 'a {
     BufReader::new(f)
         .lines()
-        .filter_map(|l| l.ok())
+        .filter_map(std::result::Result::ok)
         .filter(move |l| graves.iter().any(|y| y == record_entry(l).dest))
 }
 
@@ -989,7 +968,7 @@ fn lines_of_graves<'a>(f: fs::File, graves: &'a [PathBuf]) -> impl Iterator<Item
 fn seance<T: AsRef<str>>(f: fs::File, gravepath: T) -> impl Iterator<Item = PathBuf> {
     BufReader::new(f)
         .lines()
-        .filter_map(|l| l.ok())
+        .filter_map(std::result::Result::ok)
         .map(|l| PathBuf::from(record_entry(&l).dest))
         .filter(move |d| d.starts_with(gravepath.as_ref()))
 }
@@ -1006,18 +985,18 @@ fn delete_lines_from_record<R: AsRef<Path>>(
     // since we'll be overwriting the record in-place.
     let lines_to_write: Vec<String> = BufReader::new(f)
         .lines()
-        .filter_map(|l| l.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|l| !graves.iter().any(|y| y == record_entry(l).dest))
         .collect();
     let mut f = fs::File::create(record)?;
     for line in lines_to_write {
-        writeln!(f, "{}", line)?;
+        writeln!(f, "{line}")?;
     }
 
     Ok(())
 }
 
-/// Create a GlobWalkerBuilder object that traverses the base directory, picking up
+/// Create a `GlobWalkerBuilder` object that traverses the base directory, picking up
 /// each file matching the pattern.
 fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> Result<GlobWalker>
 where
@@ -1031,7 +1010,7 @@ where
         .map_err(|e| Error::with_chain(e, "Invalid data"))
 }
 
-/// Implement the glob_walker function, pushing each result to a Vec<PathBuf> and returning
+/// Implement the `glob_walker` function, pushing each result to a Vec<PathBuf> and returning
 /// this vector
 fn glob_walk<P>(pattern: &str, base_path: P, max_depth: usize) -> Vec<PathBuf>
 where
