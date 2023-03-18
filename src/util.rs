@@ -63,7 +63,7 @@ pub(crate) fn prompt_yes<T: AsRef<str>>(prompt: T) -> bool {
 pub(crate) fn rename_grave<G: AsRef<Path>>(grave: G) -> PathBuf {
     let grave = grave.as_ref();
     let name = grave.to_str().expect("Filename must be valid unicode.");
-    (1_u64..)
+    (1_u64..u64::MAX)
         .map(|i| PathBuf::from(format!("{name}~{i}")))
         .find(|p| !symlink_exists(p))
         .expect("Failed to rename duplicate file or directory")

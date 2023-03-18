@@ -1,47 +1,29 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(dead_code)]
-extern crate clap;
-extern crate core;
-#[macro_use]
-extern crate error_chain;
-extern crate globwalk;
-extern crate tabwriter;
-extern crate time;
-extern crate walkdir;
 
-use clap::{crate_authors, crate_version, App, AppSettings, Arg};
-use clap_generate::{
-    generate,
-    generators::{Bash, Elvish, Fish, PowerShell, Zsh},
-    Generator,
-};
+mod comp_helper;
+mod errors;
+mod util;
 
-use globwalk::{GlobWalker, GlobWalkerBuilder};
-use std::{
-    env, fs, io,
-    io::{BufRead, BufReader, Cursor, Read, Write},
-    os::unix::fs::{FileTypeExt, PermissionsExt},
-    path::{Path, PathBuf},
-};
-use walkdir::WalkDir;
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::{env, fs, io};
 
 use chrono::offset::Local;
 use chrono::DateTime;
-
-mod errors;
-
+use clap::{crate_authors, crate_version, App, AppSettings, Arg};
+use clap_generate::generators::{Bash, Elvish, Fish, PowerShell, Zsh};
+use clap_generate::{generate, Generator};
 use colored::Colorize;
-use errors::{Error, ErrorKind, Result, ResultExt};
-
-mod comp_helper;
-mod util;
-
+use eyre::{bail, eyre, Result, WrapErr};
+use globwalk::{GlobWalker, GlobWalkerBuilder};
 use util::{
     get_user, humanize_bytes, join_absolute, parent_file_exists, prompt_yes, rename_grave,
     symlink_exists,
 };
+use walkdir::WalkDir;
 
 macro_rules! fmt_exp {
     ($a:expr,$b:ident) => {
@@ -83,7 +65,6 @@ struct RecordItem<'a> {
     dest: &'a Path,
 }
 
-#[allow(clippy::enum_variant_names)]
 enum Shell {
     Bash,
     Elvish,
@@ -93,7 +74,8 @@ enum Shell {
 }
 
 impl std::str::FromStr for Shell {
-    type Err = errors::ErrorKind;
+    type Err = eyre::ErrReport;
+
     fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().trim() {
             "bash" => Ok(Shell::Bash),
@@ -101,31 +83,12 @@ impl std::str::FromStr for Shell {
             "fish" => Ok(Shell::Fish),
             "powershell" => Ok(Shell::PowerShell),
             "zsh" => Ok(Shell::Zsh),
-            _ => Err(ErrorKind::InvalidShell(s.bright_red().bold())),
+            _ => Err(eyre!("Invalid shell: {}", s.bright_red().bold())),
         }
     }
 }
 
-fn main() {
-    if let Err(ref e) = run() {
-        let stderr = &mut ::std::io::stderr();
-        let errmsg = "Error writing to stderr";
-
-        writeln!(stderr, "error: {e}").expect(errmsg);
-
-        for e in e.iter().skip(1) {
-            writeln!(stderr, "caused by: {e}").expect(errmsg);
-        }
-
-        if let Some(backtrace) = e.backtrace() {
-            writeln!(stderr, "backtrace: {backtrace:?}").expect(errmsg);
-        }
-
-        ::std::process::exit(1);
-    }
-}
-
-fn run() -> Result<()> {
+fn main() -> Result<()> {
     let matches = &cli_rip().get_matches();
     let nocolor: bool = matches.is_present("nocolor");
     let verbose: bool = matches.is_present("verbose");
@@ -188,13 +151,13 @@ fn run() -> Result<()> {
                 }
                 tab_handle.flush()?;
             }
-            fs::remove_dir_all(graveyard).chain_err(|| "Couldn't unlink graveyard")?;
+            fs::remove_dir_all(graveyard).wrap_err("Couldn't unlink graveyard")?;
         }
         return Ok(());
     }
 
     let record: &Path = &graveyard.join(RECORD);
-    let cwd: PathBuf = env::current_dir().chain_err(|| "Failed to get current dir")?;
+    let cwd: PathBuf = env::current_dir().wrap_err("Failed to get current dir")?;
 
     // == UNBURY ==
     if let Some(t) = matches.values_of("unbury") {
@@ -273,7 +236,7 @@ fn run() -> Result<()> {
 
         // Otherwise, add the last deleted file, globally or locally
         if graves_to_exhume.is_empty() {
-            let new_cwd = env::current_dir().chain_err(|| "Failed to get current dir")?;
+            let new_cwd = env::current_dir().wrap_err("Failed to get current dir")?;
             if matches.is_present("local") {
                 if let Ok(s) = get_last_bury(record, &new_cwd, "local") {
                     if verbose {
@@ -295,7 +258,7 @@ fn run() -> Result<()> {
         }
 
         // Go through the graveyard and exhume all the graves
-        let f = fs::File::open(record).chain_err(|| "Couldn't read the record")?;
+        let f = fs::File::open(record).wrap_err("Couldn't read the record")?;
         for line in lines_of_graves(f, graves_to_exhume) {
             let entry: RecordItem = record_entry(&line);
             let orig: &Path = &{
@@ -305,7 +268,7 @@ fn run() -> Result<()> {
                     PathBuf::from(entry.orig)
                 }
             };
-            bury(entry.dest, orig).chain_err(|| {
+            bury(entry.dest, orig).wrap_err_with(|| {
                 format!(
                     "Unbury failed: couldn't copy files from {} to {}",
                     fmt_exp!(entry.dest, magenta),
@@ -348,7 +311,7 @@ fn run() -> Result<()> {
             join_absolute(graveyard, cwd)
         };
 
-        let f = fs::File::open(record).chain_err(|| "Failed to read record")?;
+        let f = fs::File::open(record).wrap_err("Failed to read record")?;
         let stdout = io::stdout();
         let std_lock = stdout.lock();
         let handle = io::BufWriter::new(std_lock);
@@ -393,11 +356,6 @@ fn run() -> Result<()> {
                     }
                 }
             } else {
-                // let brbb = |s: &str| s.bright_blue().bold();
-                // let brcb = |s: &str| "=".repeat(s.len()).bright_cyan().bold();
-                // writeln!(tab_handle, "{}\t{}\t{}\t{}", brbb("Index"), brbb("Created"), brbb("Type"), brbb("File"))?;
-                // writeln!(tab_handle, "{}\t{}\t{}\t{}", brcb("Index"), brcb("Created"), brcb("Type"), brcb("File"))?;
-
                 if matches.is_present("fullpath") {
                     if matches.is_present("plain") {
                         println!("{}", fmt_exp!(grave, yellow));
@@ -448,7 +406,7 @@ fn run() -> Result<()> {
                 } else {
                     cwd.join(target)
                         .canonicalize()
-                        .chain_err(|| "Failed to canonicalize path")?
+                        .wrap_err("Failed to canonicalize path")?
                 };
 
                 if matches.is_present("inspect") {
@@ -523,7 +481,7 @@ fn run() -> Result<()> {
                     }
 
                     if fs::remove_dir_all(source).is_err() {
-                        fs::remove_file(source).chain_err(|| "Couldn't unlink")?;
+                        fs::remove_file(source).wrap_err("Couldn't unlink")?;
                     }
                 }
 
@@ -534,9 +492,10 @@ fn run() -> Result<()> {
                         rename_grave(dest)
                     } else if let Some(ancestor_file) = parent_file_exists(&dest) {
                         let new_ancestor = rename_grave(&ancestor_file);
-                        let relative_dest = dest.strip_prefix(&ancestor_file).chain_err(|| {
-                            "Parent directory isn't a prefix of child directories?"
-                        })?;
+                        let relative_dest =
+                            dest.strip_prefix(&ancestor_file).wrap_err_with(|| {
+                                "Parent directory isn't a prefix of child directories?"
+                            })?;
                         join_absolute(new_ancestor, relative_dest)
                     } else {
                         dest
@@ -548,10 +507,10 @@ fn run() -> Result<()> {
                         fs::remove_dir_all(dest).ok();
                         e
                     })
-                    .chain_err(|| "Failed to bury file")?;
+                    .wrap_err("Failed to bury file")?;
                 // Clean up any partial buries due to permission error
                 write_log(source, dest, record)
-                    .chain_err(|| format!("Failed to write record at {}", record.display()))?;
+                    .wrap_err_with(|| format!("Failed to write record at {}", record.display()))?;
             } else {
                 bail!("Cannot remove {}: no such file or directory", target);
             }
@@ -602,14 +561,14 @@ fn cli_rip() -> App<'static> {
         .global_setting(AppSettings::ColorAuto)
         .about(
             "Rm ImProved
-Send files to the graveyard ($XDG_DATA_HOME/graveyard if set, else /tmp/graveyard-$USER by default) \
-instead of unlinking them.",
+Send files to the graveyard ($XDG_DATA_HOME/graveyard if set, else /tmp/graveyard-$USER by \
+             default) instead of unlinking them.",
         )
         .arg(
             Arg::new("TARGET")
                 .about("File or directory to remove")
                 .takes_value(true)
-                .multiple(true), //.index(1)
+                .multiple(true),
         )
         .arg(
             Arg::new("graveyard")
@@ -635,8 +594,8 @@ instead of unlinking them.",
                 .about("Prints full path of files under current directory (with -s)")
                 .short('f')
                 .long("fullpath"),
-                // It'd be nice to have a requires for two other args using an or
-                // seance, decompose
+            // It'd be nice to have a requires for two other args using an or
+            // seance, decompose
         )
         .arg(
             Arg::new("all")
@@ -655,16 +614,16 @@ instead of unlinking them.",
         .arg(
             Arg::new("unbury")
                 .about(
-                    "Undo the last removal, or specify some file(s) in the \
-                   graveyard. Can be glob, or combined with -s (see --help)",
+                    "Undo the last removal, or specify some file(s) in the graveyard. Can be \
+                     glob, or combined with -s (see --help)",
                 )
                 .long_about(
                     "Undo last removal with no arguments, specify some files using globbing \
-                    syntax, or combine with '-s' to undo all files that have been \
-                    removed in current directory. Globbing syntax involves: \
-                    *glob, **glob, *.{png,jpg,gif}, and using '!' before all previous \
-                    mentioned globs to negate them. If '-l' is passed with no arguments, the most \
-                    recently deleted file from '$CWD' will be returned."
+                     syntax, or combine with '-s' to undo all files that have been removed in \
+                     current directory. Globbing syntax involves: *glob, **glob, *.{png,jpg,gif}, \
+                     and using '!' before all previous mentioned globs to negate them. If '-l' is \
+                     passed with no arguments, the most recently deleted file from '$CWD' will be \
+                     returned.",
                 )
                 .short('u')
                 .long("unbury")
@@ -684,11 +643,12 @@ instead of unlinking them.",
             Arg::new("local")
                 .about("Undo files in current directory (local to current directory)")
                 .long_about(
-                    "Undo files that are in the current directory. If the files are in a directory \
-                    below the directory that you are in, you have to specify that directory. For example \
-                    if you're in a directory with a subdirectory 'src', and a file is in the $GRAVEYARD \
-                    as $GRAVEYARD/$PWD/src/<file>, you must type 'src/<file>' for it to be unburied. \
-                    If a file is not specified, it will return the most recently deleted file from the local directory."
+                    "Undo files that are in the current directory. If the files are in a \
+                     directory below the directory that you are in, you have to specify that \
+                     directory. For example if you're in a directory with a subdirectory 'src', \
+                     and a file is in the $GRAVEYARD as $GRAVEYARD/$PWD/src/<file>, you must type \
+                     'src/<file>' for it to be unburied. If a file is not specified, it will \
+                     return the most recently deleted file from the local directory.",
                 )
                 .short('l')
                 .long("local")
@@ -698,8 +658,8 @@ instead of unlinking them.",
             Arg::new("plain")
                 .about("Prints only file-path (to be used with scripts)")
                 .long_about(
-                    "Prints only file-path (that is: no index, no time). Can be used with \
-                    any variation of '-sfpN'"
+                    "Prints only file-path (that is: no index, no time). Can be used with any \
+                     variation of '-sfpN'",
                 )
                 .short('p')
                 .long("plain"),
@@ -756,11 +716,11 @@ fn replace(haystack: &mut String, needle: &str, replacement: &str) -> Result<()>
         haystack.replace_range(index..index + needle.len(), replacement);
         Ok(())
     } else {
-        Err(ErrorKind::MismatchedCompletion(
+        Err(eyre!(
+            "Failed to find text:\n{}\n…in completion script:\n{}",
             needle.to_string().red().bold(),
             (*haystack).green().bold(),
-        )
-        .into())
+        ))
     }
 }
 
@@ -776,12 +736,12 @@ where
         .create(true)
         .append(true)
         .open(record)?;
+    let current_time = Local::now().format("%a %b %e %T %Y");
     writeln!(
         f,
-        "{}\t{}\t{}",
-        time::now().ctime(),
-        source.display(),
-        dest.display()
+        "{current_time}\t{src}\t{dest}",
+        src = source.display(),
+        dest = dest.display()
     )?;
 
     Ok(())
@@ -796,11 +756,11 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
     }
 
     // If that didn't work, then copy and rm.
-    let parent = dest.parent().ok_or("Couldn't get parent of dest")?;
-    fs::create_dir_all(parent).chain_err(|| "Couldn't create parent dir")?;
+    let parent = dest.parent().ok_or(eyre!("Couldn't get parent of dest"))?;
+    fs::create_dir_all(parent).wrap_err("Couldn't create parent dir")?;
 
     if fs::symlink_metadata(source)
-        .chain_err(|| "Couldn't get metadata")?
+        .wrap_err("Couldn't get metadata")?
         .is_dir()
     {
         // for x in globwalk::glob() {
@@ -814,9 +774,9 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
             let orphan: &Path = entry
                 .path()
                 .strip_prefix(source)
-                .chain_err(|| "Parent directory isn't a prefix of child directories?")?;
+                .wrap_err("Parent directory isn't a prefix of child directories?")?;
             if entry.file_type().is_dir() {
-                fs::create_dir_all(dest.join(orphan)).chain_err(|| {
+                fs::create_dir_all(dest.join(orphan)).wrap_err_with(|| {
                     format!(
                         "Failed to create {} in {}",
                         entry.path().display(),
@@ -824,7 +784,7 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
                     )
                 })?;
             } else {
-                copy_file(entry.path(), dest.join(orphan)).chain_err(|| {
+                copy_file(entry.path(), dest.join(orphan)).wrap_err_with(|| {
                     format!(
                         "Failed to copy file from {} to {}",
                         entry.path().display(),
@@ -834,9 +794,9 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
             }
         }
         fs::remove_dir_all(source)
-            .chain_err(|| format!("Failed to remove dir: {}", source.display()))?;
+            .wrap_err_with(|| format!("Failed to remove dir: {}", source.display()))?;
     } else {
-        copy_file(source, dest).chain_err(|| {
+        copy_file(source, dest).wrap_err_with(|| {
             format!(
                 "Failed to copy file from {} to {}",
                 source.display(),
@@ -844,7 +804,7 @@ fn bury<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
             )
         })?;
         fs::remove_file(source)
-            .chain_err(|| format!("Failed to remove file: {}", source.display()))?;
+            .wrap_err_with(|| format!("Failed to remove file: {}", source.display()))?;
     }
 
     Ok(())
@@ -956,8 +916,7 @@ fn record_entry(line: &str) -> RecordItem {
 }
 
 /// Takes a vector of grave paths and returns the respective lines in the record
-#[allow(clippy::needless_lifetimes)]
-fn lines_of_graves<'a>(f: fs::File, graves: &'a [PathBuf]) -> impl Iterator<Item = String> + 'a {
+fn lines_of_graves(f: fs::File, graves: &[PathBuf]) -> impl Iterator<Item = String> + '_ {
     BufReader::new(f)
         .lines()
         .filter_map(std::result::Result::ok)
@@ -998,7 +957,7 @@ fn delete_lines_from_record<R: AsRef<Path>>(
 
 /// Create a `GlobWalkerBuilder` object that traverses the base directory, picking up
 /// each file matching the pattern.
-fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> Result<GlobWalker>
+fn glob_walker<S>(base: S, pattern: S, max_depth: usize) -> eyre::Result<GlobWalker>
 where
     S: AsRef<str>,
 {
@@ -1007,7 +966,8 @@ where
     builder
         .max_depth(max_depth)
         .build()
-        .map_err(|e| Error::with_chain(e, "Invalid data"))
+        .map_err(|e| eyre!(e))
+        .wrap_err("Invalid data")
 }
 
 /// Implement the `glob_walker` function, pushing each result to a Vec<PathBuf> and returning

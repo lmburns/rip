@@ -1,10 +1,10 @@
 [package]
-edition = '2018'
+edition = '2021'
 name = "rm-improved"
 version = "0.13.8"
 authors = ["nivekuil <mail@nivekuil.com>", "Lucas Burns <lmb@lmburns.com>"]
 description = "rip: a safe and ergonomic alternative to rm (fork)"
-repository = "https://github.com/lmburns/rip"
+repository = "https://github.com/jeiang/rip"
 readme = "README.md"
 license = "GPL-3.0+"
 include = [
@@ -15,17 +15,16 @@ categories = ["command-line-utilities"]
 autobins = false
 
 [dependencies]
-walkdir = "1"
-time = "0.1"
-error-chain = "0.12"
-colored = "2.0.0"
-chrono = "0.4.19"
-anyhow = "1.0.42"
+walkdir = "2"
+colored = "2"
+chrono = "0.4"
+eyre = "0.6"
 glob = "0.3.0"
 globwalk = "0.8.1"
+tabwriter = "1.2.1"
+# TODO: swap to clap v4 & clap_complete
 clap = "3.0.0-beta.2"
 clap_generate = "3.0.0-beta.2"
-tabwriter = "1.2.1"
 
 [profile.release]
 strip = true
