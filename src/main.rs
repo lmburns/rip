@@ -2,6 +2,8 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::cast_possible_truncation)]
 
+// TODO: add some tests
+
 mod cli;
 mod errors;
 mod util;

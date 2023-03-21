@@ -3,11 +3,16 @@ name: "Build legacy Nix package on Ubuntu"
 on:
   push:
 
+# TODO: Add a job for tests
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: cachix/install-nix-action@v12
+      - name: Cache install Nix packages
+        uses: mtoohey31/cache-flake-attrs@v2
+        with:
+          key: ${{ runner.os }}-nix-${{ hashFiles('./flake.lock', './flake.nix') }}
       - name: Building package
-        run: nix-build . -A defaultPackage.x86_64-linux
+        run: nix --experimental-features 'nix-command flakes' build

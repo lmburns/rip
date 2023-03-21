@@ -24,7 +24,6 @@
         };
 
       in {
-        # TODO: make nix run run rip & not rm-improved
         defaultPackage = naersk'.buildPackage {
           src = ./.;
 
@@ -33,6 +32,7 @@
           inherit version;
         };
 
+        # TODO: add some tests
         devShell = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [ 
             toolchain
