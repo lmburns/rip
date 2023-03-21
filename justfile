@@ -68,9 +68,9 @@ no-changes:
 
 @lint:
     printf "\033[38;5;10mChecking for FIXME/TODO...\n\033[0m"
-    rg -s '\bFIXME\b|\bFIX\b|\bDISCOVER\b|\bNOTE\b|\bNOTES\b|\bINFO\b|\bOPTIMIZE\b|\bXXX\b|\bEXPLAIN\b|\bTODO\b|\bHACK\b|\bBUG\b|\bBUGS\b' src/*.rs
+    rg -s '\bFIXME\b|\bFIX\b|\bDISCOVER\b|\bNOTE\b|\bNOTES\b|\bINFO\b|\bOPTIMIZE\b|\bXXX\b|\bEXPLAIN\b|\bTODO\b|\bHACK\b|\bBUG\b|\bBUGS\b' src/*.rs || printf "\033[38;5;10mNo FIXME/TODO found\033[0m"
     printf "\n\033[38;5;10mChecking for long lines...\n\033[0m"
-    rg --color=always '.{100,}' src/*.rs
+    rg --color=always '.{100,}' src/*.rs || printf "\033[38;5;10mNo long lines found\033[0m"
 
 @code:
     tokei -ft rust -s lines

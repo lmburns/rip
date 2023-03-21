@@ -1,9 +1,9 @@
 [package]
-edition = '2021'
+edition = "2021"
 name = "rm-improved"
-version = "0.13.8"
-authors = ["nivekuil <mail@nivekuil.com>", "Lucas Burns <lmb@lmburns.com>"]
-description = "rip: a safe and ergonomic alternative to rm (fork)"
+version = "0.14.0"
+authors = ["nivekuil <mail@nivekuil.com>", "Lucas Burns <lmb@lmburns.com>", "Aidan Pinard <aidan@aidanpinard.co>"]
+description = "rip: a safe and ergonomic alternative to rm (fork of fork)"
 repository = "https://github.com/jeiang/rip"
 readme = "README.md"
 license = "GPL-3.0+"
@@ -16,15 +16,18 @@ autobins = false
 
 [dependencies]
 walkdir = "2"
-colored = "2"
+colored = "2" # TODO: remove
 chrono = "0.4"
 eyre = "0.6"
 glob = "0.3.0"
 globwalk = "0.8.1"
 tabwriter = "1.2.1"
-# TODO: swap to clap v4 & clap_complete
-clap = "3.0.0-beta.2"
-clap_generate = "3.0.0-beta.2"
+clap = {version = "4.1.9", features = [ "derive", "cargo" ] }
+clap_complete = "4.1.5"
+once_cell = "1.17.1" # Resolve version collision between eyre & clap v4
+owo-colors = "3.5.0"
+anstream = {version = "0.2.6", features = [ "auto" ] }
+clap_complete_command = "0.5.1"
 
 [profile.release]
 strip = true

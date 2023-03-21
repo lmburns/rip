@@ -16,6 +16,7 @@
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
         inherit (cargoToml.package) name;
         inherit (cargoToml.package) version;
+        pname = (builtins.elemAt cargoToml.bin 0).name; # Get the name of the executable
 
         naersk' = pkgs.callPackage naersk {
           cargo = toolchain;
@@ -23,8 +24,13 @@
         };
 
       in {
+        # TODO: make nix run run rip & not rm-improved
         defaultPackage = naersk'.buildPackage {
           src = ./.;
+
+          # Use the name of the executable instead of the name of the package
+          name = pname;
+          inherit version;
         };
 
         devShell = pkgs.mkShell {
@@ -40,6 +46,9 @@
             fzf
             ripgrep
             tokei
+
+            # Debugging
+            lldb
           ];
         };
       }
