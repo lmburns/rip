@@ -16,7 +16,7 @@ autobins = false
 
 [dependencies]
 walkdir = "1"
-time = "0.1"
+time = "0.2"
 error-chain = "0.12"
 colored = "2.0.0"
 chrono = "0.4.19"
